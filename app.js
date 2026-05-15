@@ -1,13 +1,15 @@
 /**
- * Spatial Logic v1.0 - Core Engine & Dashboard Layer
+ * Spatial Logic v1.2 - Predictive Area Chart Edition
+ * Engineer-level consistency update
  */
 
 const CONFIG = {
     k: 0.5,
     windowSize: 40,
     lowPassAlpha: 0.3,
-    epochMs: 60000,         // 1 perc per epoch
-    maxEpochs: 2880         // 48 óra (2880 perc) perzisztencia
+    epochMs: 60000,         
+    maxEpochs: 1440,        // 24 hours persistence
+    stitchThreshold: 120000
 };
 
 let sensorData = { x: [], y: [], z: [] };
@@ -15,7 +17,7 @@ let lastStability = 100;
 let isRunning = false;
 let lastTapTime = 0;
 
-// UI Hivatkozások
+// UI DOM References
 const hudWidget = document.getElementById('hud-widget');
 const dashContent = document.getElementById('dashboard-content');
 const stabilityEl = document.getElementById('stability-value');
@@ -24,21 +26,16 @@ const trendArrow = document.getElementById('trend-arrow');
 const pulseEl = document.getElementById('focus-indicator');
 const overlay = document.getElementById('overlay-msg');
 
-// Perzisztens adattároló betöltése (Circular Buffer)
 let cognitiveHistory = JSON.parse(localStorage.getItem('sl_history') || '[]');
 
-/**
- * INIT ÉS DUPLA KOPPINTÁS KEZELÉS
- */
+// --- SYSTEM INITIALIZATION ---
 window.addEventListener('click', async function() {
     const now = Date.now();
     const timeSinceLastTap = now - lastTapTime;
     
     if (isRunning && timeSinceLastTap < 400 && timeSinceLastTap > 50) {
-        // Double Tap -> Toggle Dashboard
         openDashboard();
     } else if (!isRunning) {
-        // Első kattintás -> Rendszer indítása
         overlay.innerText = "Szenzor inicializálása...";
         try {
             if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
@@ -48,9 +45,7 @@ window.addEventListener('click', async function() {
             } else {
                 initEngine();
             }
-        } catch (err) {
-            overlay.innerText = "Kivétel: " + err.message;
-        }
+        } catch (err) { overlay.innerText = "Kivétel: " + err.message; }
     }
     lastTapTime = now;
 });
@@ -60,22 +55,22 @@ function initEngine() {
     overlay.style.display = 'none';
     isRunning = true;
     
-    // Adatgyűjtés indítása percenként (Epoch rögzítés)
+    // Heartbeat for background persistence
+    if ("geolocation" in navigator) {
+        navigator.geolocation.watchPosition(()=>{}, ()=>{}, {enableHighAccuracy:false});
+    }
+
     setInterval(recordEpoch, CONFIG.epochMs);
 }
 
-/**
- * SZENZOR FELDOLGOZÁS (Real-time Layer)
- */
+// --- CORE SENSOR LOGIC ---
 function handleMotion(event) {
     let acc = event.accelerationIncludingGravity || event.acceleration;
     if (!acc || (acc.x === null && acc.y === null)) return;
 
-    const x = acc.x || 0; const y = acc.y || 0; const z = acc.z || 0;
-    
-    sensorData.x.push(filter(x, sensorData.x));
-    sensorData.y.push(filter(y, sensorData.y));
-    sensorData.z.push(filter(z, sensorData.z));
+    sensorData.x.push(filter(acc.x || 0, sensorData.x));
+    sensorData.y.push(filter(acc.y || 0, sensorData.y));
+    sensorData.z.push(filter(acc.z || 0, sensorData.z));
     
     if (sensorData.x.length > CONFIG.windowSize) {
         sensorData.x.shift(); sensorData.y.shift(); sensorData.z.shift();
@@ -89,40 +84,21 @@ function filter(val, arr) {
 }
 
 function calculateRealTimeStability() {
-    const varX = getVariance(sensorData.x);
-    const varY = getVariance(sensorData.y);
-    const varZ = getVariance(sensorData.z);
-    
-    const combinedStd = Math.sqrt(varX + varY + varZ);
+    const getVar = (arr) => {
+        const mean = arr.reduce((a, b) => a + b) / arr.length;
+        return arr.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / arr.length;
+    };
+    const combinedStd = Math.sqrt(getVar(sensorData.x) + getVar(sensorData.y) + getVar(sensorData.z));
     lastStability = Math.max(0, Math.min(100, Math.round(100 * Math.exp(-CONFIG.k * combinedStd))));
-    
     updateMiniUI(lastStability);
-}
-
-function getVariance(arr) {
-    if (arr.length === 0) return 0;
-    const mean = arr.reduce((a, b) => a + b) / arr.length;
-    return arr.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / arr.length;
 }
 
 function updateMiniUI(s) {
     stabilityEl.innerText = `${s}%`;
-    
-    if (s > 80) {
-        stateEl.innerText = "FLOW";
-        hudWidget.style.borderRightColor = "var(--accent-green)";
-        pulseEl.classList.remove('pulse-active');
-    } else if (s > 40) {
-        stateEl.innerText = "STABLE";
-        hudWidget.style.borderRightColor = "var(--accent-yellow)";
-        pulseEl.classList.remove('pulse-active');
-    } else {
-        stateEl.innerText = "FATIGUE";
-        hudWidget.style.borderRightColor = "var(--accent-red)";
-        pulseEl.classList.add('pulse-active');
-    }
+    stateEl.innerText = s > 80 ? "FLOW" : (s > 40 ? "STABLE" : "FATIGUE");
+    hudWidget.style.borderRightColor = s > 80 ? "#00ff88" : (s > 40 ? "#ffcc00" : "#ff4444");
+    s <= 40 ? pulseEl.classList.add('pulse-active') : pulseEl.classList.remove('pulse-active');
 
-    // Egyszerű trend nyíl az utolsó mentett értékhez képest
     if (cognitiveHistory.length > 0) {
         const lastRec = cognitiveHistory[cognitiveHistory.length - 1].s;
         if (s > lastRec + 5) trendArrow.innerText = "↑";
@@ -131,102 +107,94 @@ function updateMiniUI(s) {
     }
 }
 
-/**
- * ADATTÁROLÁS (Persistence Layer)
- */
 function recordEpoch() {
-    cognitiveHistory.push({
-        t: Date.now(),
-        s: lastStability
-    });
-    
-    if (cognitiveHistory.length > CONFIG.maxEpochs) {
-        cognitiveHistory.shift();
-    }
+    cognitiveHistory.push({ t: Date.now(), s: lastStability });
+    if (cognitiveHistory.length > CONFIG.maxEpochs) cognitiveHistory.shift();
     localStorage.setItem('sl_history', JSON.stringify(cognitiveHistory));
 }
 
-/**
- * DASHBOARD & LAZY PROCESSING
- */
+// --- PREDICTIVE RENDERING ENGINE ---
 function openDashboard() {
-    if (hudWidget.classList.contains('full-view')) return; // Már nyitva van
-
-    // Váltás
     hudWidget.classList.replace('mini-view', 'full-view');
     dashContent.style.display = 'block';
-
-    // Adatok Lazy számolása és renderelése
     processAndRenderDashboard();
-
-    // Auto-bezárás 5 másodperc után
     setTimeout(() => {
         hudWidget.classList.replace('full-view', 'mini-view');
         dashContent.style.display = 'none';
-    }, 5000);
+    }, 8000);
 }
 
 function processAndRenderDashboard() {
     if (cognitiveHistory.length === 0) return;
 
-    // 1. Flow Index
-    const flowCount = cognitiveHistory.filter(ep => ep.s >= 80).length;
-    const flowIdx = Math.round((flowCount / cognitiveHistory.length) * 100);
-    document.getElementById('kpi-flow').innerText = `${flowIdx}%`;
+    const canvas = document.getElementById('cognitiveChart');
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width;
+    const h = canvas.height;
 
-    // 2. Recovery Rate (Becslés Fatigue állapotokból Flow-ba térés átlagos idejéből)
-    let recoveryMins = 0;
-    let recoveryEvents = 0;
-    let fatigueStart = null;
-    
-    for (let i = 0; i < cognitiveHistory.length; i++) {
-        if (cognitiveHistory[i].s <= 40 && fatigueStart === null) {
-            fatigueStart = i;
-        } else if (cognitiveHistory[i].s >= 80 && fatigueStart !== null) {
-            recoveryMins += (i - fatigueStart);
-            recoveryEvents++;
-            fatigueStart = null;
-        }
-    }
-    const avgRec = recoveryEvents > 0 ? Math.round(recoveryMins / recoveryEvents) : 0;
-    document.getElementById('kpi-recovery').innerText = avgRec > 0 ? `${avgRec}m` : "--";
-
-    // 3. Histogram (Utolsó 5 óra = max 300 adatpont, 5 oszlopban = 60 perc/oszlop)
-    const histContainer = document.getElementById('histogram');
-    histContainer.innerHTML = ''; // Clear old
-    
-    for (let i = 4; i >= 0; i--) {
-        const startIdx = Math.max(0, cognitiveHistory.length - (i + 1) * 60);
-        const endIdx = Math.max(0, cognitiveHistory.length - i * 60);
+    // 1. Data Synthesis: Real vs Target
+    let full24h = [];
+    const now = Date.now();
+    for (let i = 0; i < 1440; i++) {
+        let ts = now - (1440 - i) * 60000;
+        let realPoint = cognitiveHistory.find(p => Math.abs(p.t - ts) < 30000);
         
-        let avg = 0;
-        if (startIdx !== endIdx) {
-            const block = cognitiveHistory.slice(startIdx, endIdx);
-            avg = block.reduce((sum, ep) => sum + ep.s, 0) / block.length;
-        }
+        // Target Curve: Circadian-like focus model
+        let hour = new Date(ts).getHours();
+        let targetS = 65 + 20 * Math.sin((hour - 8) * Math.PI / 12); 
 
-        const bar = document.createElement('div');
-        bar.className = 'bar';
-        bar.style.height = `${Math.max(2, avg)}%`; // Min 2% hogy látszódjon a vonal
-        bar.style.backgroundColor = avg >= 80 ? 'var(--accent-green)' : (avg > 40 ? 'var(--accent-yellow)' : 'var(--accent-red)');
-        histContainer.appendChild(bar);
+        full24h.push({ val: realPoint ? realPoint.s : null, target: targetS, isReal: !!realPoint });
     }
 
-    // 4. Burnout Alert (Utolsó 3 óra tendenciája)
-    const alertMsg = document.getElementById('alert-msg');
-    const last3Hours = cognitiveHistory.slice(-180);
+    // 2. KPI Logic
+    const flowPoints = cognitiveHistory.filter(p => p.s >= 80).length;
+    document.getElementById('kpi-flow').innerText = Math.round((flowPoints / Math.max(1, cognitiveHistory.length)) * 100) + "%";
     
-    if (last3Hours.length >= 60) {
-        const recentAvg = last3Hours.reduce((sum, ep) => sum + ep.s, 0) / last3Hours.length;
-        if (recentAvg < 40) {
-            alertMsg.innerText = "Riasztás: Kognitív túlterhelés (Burnout kockázat)";
-            alertMsg.style.color = "var(--accent-red)";
-        } else {
-            alertMsg.innerText = "Stabilitás megfelelő.";
-            alertMsg.style.color = "var(--accent-green)";
+    // Recovery heuristic
+    let recMins = cognitiveHistory.filter((p, i) => i > 0 && p.s > 70 && cognitiveHistory[i-1].s < 50).length;
+    document.getElementById('kpi-recovery').innerText = recMins > 0 ? recMins + "m" : "--";
+
+    // 3. Canvas Rendering
+    ctx.clearRect(0, 0, w, h);
+
+    // Render Target Area (The "Ghost" Simulation)
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    full24h.forEach((p, i) => { ctx.lineTo((i / 1440) * w, h - (p.target / 100) * h); });
+    ctx.lineTo(w, h);
+    ctx.fillStyle = 'rgba(0, 200, 255, 0.1)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0, 200, 255, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // Render Real Data (Neon Path)
+    ctx.beginPath();
+    let firstReal = true;
+    full24h.forEach((p, i) => {
+        if (p.isReal) {
+            let x = (i / 1440) * w;
+            let y = h - (p.val / 100) * h;
+            if (firstReal) { ctx.moveTo(x, y); firstReal = false; }
+            else ctx.lineTo(x, y);
         }
+    });
+    ctx.shadowBlur = 8;
+    ctx.shadowColor = '#00ff88';
+    ctx.strokeStyle = '#00ff88';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.shadowBlur = 0;
+
+    // Alert Logic
+    const alertMsg = document.getElementById('alert-msg');
+    const recentAvg = cognitiveHistory.slice(-60).reduce((a, b) => a + b.s, 0) / Math.max(1, Math.min(60, cognitiveHistory.length));
+    if (recentAvg < 45) {
+        alertMsg.innerText = "COGNITIVE OVERLOAD DETECTED";
+        alertMsg.style.color = "#ff4444";
     } else {
-        alertMsg.innerText = "Nincs elég adat az elemzéshez.";
+        alertMsg.innerText = "SYSTEMS OPTIMAL";
+        alertMsg.style.color = "#00ff88";
     }
-                    }
-            
+                          }
+                             

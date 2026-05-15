@@ -1,15 +1,21 @@
 {
-  "name": "Spatial Logic Dashboard",
-  "short_name": "S-Logic",
+  "name": "Spatial Logic",
+  "short_name": "Spatial",
   "start_url": "index.html",
-  "display": "standalone",
+  "display": "minimal-ui",
   "background_color": "#000000",
   "theme_color": "#00ff88",
   "icons": [
     {
-      "src": "icon.png",
-      "sizes": "192x192",
+      "src": "icon-512.png",
+      "sizes": "512x512",
       "type": "image/png"
     }
-  ]
+  ],
+  "meta_wearable": {
+    "display_support": "required",
+    "background_session": "required",
+    "keep_alive": true,
+    "sensor_access": ["imu", "orientation"]
+  }
 }

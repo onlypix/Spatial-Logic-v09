@@ -4,7 +4,7 @@
  */
 
 const CONFIG = {
-    k: 0.15,            // Kalibrációs konstans
+    k: 1.5,            // Kalibrációs konstans
     windowSize: 60,     // 60 minta (~3-5 mp 20Hz-en)
     sampleRate: 50,     // ms
     lowPassAlpha: 0.2   // Zajszűrés

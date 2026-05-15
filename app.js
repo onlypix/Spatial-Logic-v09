@@ -1,6 +1,5 @@
 /**
  * Spatial Logic v1.0 - Core Engine & Dashboard Layer
- * Update: Added Algorithmic Stitching for Data Continuity
  */
 
 const CONFIG = {
@@ -8,8 +7,7 @@ const CONFIG = {
     windowSize: 40,
     lowPassAlpha: 0.3,
     epochMs: 60000,         // 1 perc per epoch
-    maxEpochs: 2880,        // 48 óra (2880 perc) perzisztencia
-    stitchThreshold: 120000 // 2 perc feletti lyuknál pótolunk
+    maxEpochs: 2880         // 48 óra (2880 perc) perzisztencia
 };
 
 let sensorData = { x: [], y: [], z: [] };
@@ -124,6 +122,7 @@ function updateMiniUI(s) {
         pulseEl.classList.add('pulse-active');
     }
 
+    // Egyszerű trend nyíl az utolsó mentett értékhez képest
     if (cognitiveHistory.length > 0) {
         const lastRec = cognitiveHistory[cognitiveHistory.length - 1].s;
         if (s > lastRec + 5) trendArrow.innerText = "↑";
@@ -148,16 +147,19 @@ function recordEpoch() {
 }
 
 /**
- * DASHBOARD & LAZY PROCESSING (With Interpolation)
+ * DASHBOARD & LAZY PROCESSING
  */
 function openDashboard() {
-    if (hudWidget.classList.contains('full-view')) return;
+    if (hudWidget.classList.contains('full-view')) return; // Már nyitva van
 
+    // Váltás
     hudWidget.classList.replace('mini-view', 'full-view');
     dashContent.style.display = 'block';
 
+    // Adatok Lazy számolása és renderelése
     processAndRenderDashboard();
 
+    // Auto-bezárás 5 másodperc után
     setTimeout(() => {
         hudWidget.classList.replace('full-view', 'mini-view');
         dashContent.style.display = 'none';
@@ -167,37 +169,20 @@ function openDashboard() {
 function processAndRenderDashboard() {
     if (cognitiveHistory.length === 0) return;
 
-    // 1. STITCHING: Adatpótlás a lyukak kitöltéséhez
-    let stitchedHistory = [];
-    for (let i = 0; i < cognitiveHistory.length; i++) {
-        stitchedHistory.push(cognitiveHistory[i]);
-        if (i < cognitiveHistory.length - 1) {
-            let gap = cognitiveHistory[i+1].t - cognitiveHistory[i].t;
-            if (gap > CONFIG.stitchThreshold && gap < 3600000) { 
-                let missingMins = Math.floor(gap / 60000);
-                for (let j = 1; j <= missingMins; j++) {
-                    stitchedHistory.push({
-                        t: cognitiveHistory[i].t + (j * 60000),
-                        s: Math.round((cognitiveHistory[i].s + cognitiveHistory[i+1].s) / 2)
-                    });
-                }
-            }
-        }
-    }
-
-    // 2. Flow Index (stitched adatokból)
-    const flowCount = stitchedHistory.filter(ep => ep.s >= 80).length;
-    const flowIdx = Math.round((flowCount / stitchedHistory.length) * 100);
+    // 1. Flow Index
+    const flowCount = cognitiveHistory.filter(ep => ep.s >= 80).length;
+    const flowIdx = Math.round((flowCount / cognitiveHistory.length) * 100);
     document.getElementById('kpi-flow').innerText = `${flowIdx}%`;
 
-    // 3. Recovery Rate (stitched adatokból)
+    // 2. Recovery Rate (Becslés Fatigue állapotokból Flow-ba térés átlagos idejéből)
     let recoveryMins = 0;
     let recoveryEvents = 0;
     let fatigueStart = null;
-    for (let i = 0; i < stitchedHistory.length; i++) {
-        if (stitchedHistory[i].s <= 40 && fatigueStart === null) {
+    
+    for (let i = 0; i < cognitiveHistory.length; i++) {
+        if (cognitiveHistory[i].s <= 40 && fatigueStart === null) {
             fatigueStart = i;
-        } else if (stitchedHistory[i].s >= 80 && fatigueStart !== null) {
+        } else if (cognitiveHistory[i].s >= 80 && fatigueStart !== null) {
             recoveryMins += (i - fatigueStart);
             recoveryEvents++;
             fatigueStart = null;
@@ -206,25 +191,42 @@ function processAndRenderDashboard() {
     const avgRec = recoveryEvents > 0 ? Math.round(recoveryMins / recoveryEvents) : 0;
     document.getElementById('kpi-recovery').innerText = avgRec > 0 ? `${avgRec}m` : "--";
 
-    // 4. Histogram Renderelés (Utolsó 5 óra a pótolt adatok alapján)
+    // 3. Histogram (Utolsó 5 óra = max 300 adatpont, 5 oszlopban = 60 perc/oszlop)
     const histContainer = document.getElementById('histogram');
-    histContainer.innerHTML = ''; 
+    histContainer.innerHTML = ''; // Clear old
+    
     for (let i = 4; i >= 0; i--) {
-        const startIdx = Math.max(0, stitchedHistory.length - (i + 1) * 60);
-        const endIdx = Math.max(0, stitchedHistory.length - i * 60);
+        const startIdx = Math.max(0, cognitiveHistory.length - (i + 1) * 60);
+        const endIdx = Math.max(0, cognitiveHistory.length - i * 60);
+        
         let avg = 0;
         if (startIdx !== endIdx) {
-            const block = stitchedHistory.slice(startIdx, endIdx);
+            const block = cognitiveHistory.slice(startIdx, endIdx);
             avg = block.reduce((sum, ep) => sum + ep.s, 0) / block.length;
         }
+
         const bar = document.createElement('div');
         bar.className = 'bar';
-        bar.style.height = `${Math.max(2, avg)}%`;
+        bar.style.height = `${Math.max(2, avg)}%`; // Min 2% hogy látszódjon a vonal
         bar.style.backgroundColor = avg >= 80 ? 'var(--accent-green)' : (avg > 40 ? 'var(--accent-yellow)' : 'var(--accent-red)');
         histContainer.appendChild(bar);
     }
 
-    // 5. Burnout Alert (Utolsó 3 óra a pótolt adatok alapján)
+    // 4. Burnout Alert (Utolsó 3 óra tendenciája)
     const alertMsg = document.getElementById('alert-msg');
-    const last3Hours = stitchedHistory.slice(-18
-                        
+    const last3Hours = cognitiveHistory.slice(-180);
+    
+    if (last3Hours.length >= 60) {
+        const recentAvg = last3Hours.reduce((sum, ep) => sum + ep.s, 0) / last3Hours.length;
+        if (recentAvg < 40) {
+            alertMsg.innerText = "Riasztás: Kognitív túlterhelés (Burnout kockázat)";
+            alertMsg.style.color = "var(--accent-red)";
+        } else {
+            alertMsg.innerText = "Stabilitás megfelelő.";
+            alertMsg.style.color = "var(--accent-green)";
+        }
+    } else {
+        alertMsg.innerText = "Nincs elég adat az elemzéshez.";
+    }
+                    }
+            

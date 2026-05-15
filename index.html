@@ -2,7 +2,7 @@
 <html lang="hu">
 <head>
     <meta charset="UTF-8">
-    <title>Spatial Logic v1.0</title>
+    <title>Spatial Logic v1.2</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="wearable-display" content="width=480, height=480, safe-zone=20">
     <link rel="stylesheet" href="style.css">
@@ -29,9 +29,10 @@
                 </div>
             </div>
 
-            <div class="chart-title">LOAD (LAST 5H)</div>
-            <div id="histogram" class="histogram">
-                </div>
+            <div class="chart-title">24H COGNITIVE FLOW & TARGET</div>
+            <div class="chart-container" style="position: relative; width: 100%; height: 120px; margin-top: 10px;">
+                <canvas id="cognitiveChart" width="400" height="120"></canvas>
+            </div>
             
             <div id="alert-msg" class="alert-msg"></div>
         </div>

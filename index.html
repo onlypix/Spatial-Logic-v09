@@ -2,24 +2,42 @@
 <html lang="hu">
 <head>
     <meta charset="UTF-8">
-    <title>Spatial Logic v0.9</title>
+    <title>Spatial Logic v1.0</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="wearable-display" content="width=480, height=480, safe-zone=20">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <link rel="manifest" href="manifest.json">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div id="hud-container">
-        <div id="stability-widget" class="widget">
-            <div class="label">STABILITY</div>
-            <div id="stability-value">--%</div>
-            <div id="state-label">INITIALIZING</div>
-        </div>
+    <div id="hud-widget" class="widget mini-view">
         <div id="focus-indicator"></div>
+        
+        <div class="header-row">
+            <div id="state-label">INITIALIZING</div>
+            <div id="trend-arrow">-</div>
+        </div>
+        <div id="stability-value">--%</div>
+
+        <div id="dashboard-content" style="display: none;">
+            <div class="kpi-grid">
+                <div class="kpi-box">
+                    <div class="kpi-label">FLOW INDEX</div>
+                    <div class="kpi-val" id="kpi-flow">--%</div>
+                </div>
+                <div class="kpi-box">
+                    <div class="kpi-label">RECOVERY</div>
+                    <div class="kpi-val" id="kpi-recovery">--m</div>
+                </div>
+            </div>
+
+            <div class="chart-title">LOAD (LAST 5H)</div>
+            <div id="histogram" class="histogram">
+                </div>
+            
+            <div id="alert-msg" class="alert-msg"></div>
+        </div>
     </div>
 
-    <div id="overlay-msg">Tap to Start Sensors</div>
+    <div id="overlay-msg">Koppints a szenzor indításához</div>
 
     <script src="app.js"></script>
 </body>

@@ -1,20 +1,19 @@
 /**
- * Spatial Logic v0.9 - Core Engine
- * IMU Processzor és Kognitív Dashboard
+ * Spatial Logic v0.9 - Sensor Fix (Full Replace)
  */
 
 const CONFIG = {
-    k: 1.5,            // Kalibrációs konstans
-    windowSize: 60,     // 60 minta (~3-5 mp 20Hz-en)
+    k: 5.0,             // Magas érzékenység a mobil teszthez
+    windowSize: 60,     // Adatablak mérete
     sampleRate: 50,     // ms
-    lowPassAlpha: 0.2   // Zajszűrés
+    lowPassAlpha: 0.2   // Szűrés mértéke
 };
 
 let sensorData = { gyroX: [], gyroY: [] };
 let lastStability = 100;
 let isRunning = false;
 
-// UI Elemek
+// UI Elemek hivatkozásai
 const stabilityEl = document.getElementById('stability-value');
 const stateEl = document.getElementById('state-label');
 const widgetEl = document.querySelector('.widget');
@@ -22,43 +21,81 @@ const pulseEl = document.getElementById('focus-indicator');
 const overlay = document.getElementById('overlay-msg');
 
 /**
- * Inicializálás - User Interaction szükséges a szenzorokhoz
+ * FŐ INDÍTÓ GOMB LOGIKA
  */
-window.addEventListener('click', async () => {
+window.addEventListener('click', function() {
     if (isRunning) return;
     
-    try {
-        if (typeof DeviceMotionEvent.requestPermission === 'function') {
-            const permission = await DeviceMotionEvent.requestPermission();
-            if (permission !== 'granted') throw new Error('Permission denied');
-        }
-        
-        window.addEventListener('devicemotion', handleMotion);
-        isRunning = true;
-        overlay.style.display = 'none';
-        console.log("Spatial Logic Engine Started");
-        
-        // Mentési ciklus (5 percenként)
-        setInterval(saveState, 300000);
-        
-    } catch (e) {
-        overlay.innerText = "Error: " + e.message;
+    overlay.innerText = "Szenzorok inicializálása...";
+
+    // 1. iOS / Safari specifikus engedélykérés
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        DeviceMotionEvent.requestPermission()
+            .then(permission => {
+                if (permission === 'granted') {
+                    setupListeners();
+                } else {
+                    overlay.innerText = "HIBA: Szenzor elutasítva!";
+                }
+            })
+            .catch(err => {
+                overlay.innerText = "HIBA: " + err.message;
+            });
+    } else {
+        // 2. Android vagy asztali böngésző
+        setupListeners();
     }
 });
 
 /**
- * IMU Adatkezelés és Zajszűrés
+ * Eseménykezelők feliratkoztatása
+ */
+function setupListeners() {
+    // Mobil böngészőkben a devicemotion az elsődleges forrás
+    window.addEventListener('devicemotion', handleMotion, true);
+    
+    // Biztonsági tartalék (egyes böngészők ezt jobban szeretik)
+    window.addEventListener('deviceorientation', (e) => {
+        if(!isRunning) {
+            isRunning = true;
+            overlay.style.display = 'none';
+        }
+    }, true);
+
+    overlay.innerText = "AKTÍV - Mozgasd a telefont!";
+    
+    // Ha 3 mp után sem jön adat, hibaüzenet
+    setTimeout(() => {
+        if(sensorData.gyroX.length === 0) {
+            overlay.innerText = "Nincs adat. Ellenőrizd a böngésző beállításait!";
+        } else {
+            overlay.style.display = 'none';
+        }
+    }, 3000);
+}
+
+/**
+ * Nyers adatok feldolgozása
  */
 function handleMotion(event) {
-    const { x, y } = event.rotationRate;
+    const rot = event.rotationRate;
+    if (!rot) return;
+
+    // Különböző böngészők más-más tengelyneveket használnak (alpha/beta/gamma)
+    const x = rot.alpha || rot.x || 0;
+    const y = rot.beta || rot.y || 0;
     
-    // Egyszerű Low-pass filter a jitter csökkentésére
-    const filteredX = filter(x || 0, sensorData.gyroX);
-    const filteredY = filter(y || 0, sensorData.gyroY);
+    if (x === 0 && y === 0) return; // Ne dolgozzunk üres adattal
+
+    isRunning = true;
+    
+    const filteredX = filter(x, sensorData.gyroX);
+    const filteredY = filter(y, sensorData.gyroY);
     
     sensorData.gyroX.push(filteredX);
     sensorData.gyroY.push(filteredY);
     
+    // Adatablak kezelése
     if (sensorData.gyroX.length > CONFIG.windowSize) {
         sensorData.gyroX.shift();
         sensorData.gyroY.shift();
@@ -66,13 +103,16 @@ function handleMotion(event) {
     }
 }
 
+/**
+ * Aluláteresztő szűrő a jitter ellen
+ */
 function filter(val, arr) {
     if (arr.length === 0) return val;
     return CONFIG.lowPassAlpha * val + (1 - CONFIG.lowPassAlpha) * arr[arr.length - 1];
 }
 
 /**
- * Kognitív Stabilitási Algoritmus (S)
+ * Stabilitási algoritmus
  */
 function calculateStability() {
     const varX = getVariance(sensorData.gyroX);
@@ -84,19 +124,22 @@ function calculateStability() {
     updateUI(stability);
 }
 
+/**
+ * Variancia számítás
+ */
 function getVariance(arr) {
+    if (arr.length === 0) return 0;
     const mean = arr.reduce((a, b) => a + b) / arr.length;
     return arr.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / arr.length;
 }
 
 /**
- * HUD Frissítés
+ * HUD vizuális frissítése
  */
 function updateUI(s) {
     lastStability = s;
     stabilityEl.innerText = `${s}%`;
     
-    // Színkódolás és Állapot
     if (s > 80) {
         stateEl.innerText = "FLOW";
         widgetEl.style.borderRightColor = "var(--accent-green)";
@@ -108,20 +151,23 @@ function updateUI(s) {
     } else {
         stateEl.innerText = "FATIGUE";
         widgetEl.style.borderRightColor = "var(--accent-red)";
-        pulseEl.classList.add('pulse-active'); // Légzéssegítő aktiválása
+        pulseEl.classList.add('pulse-active');
     }
 }
 
 /**
- * LocalStorage Adatmentés (Evening Review előkészítés)
+ * Adatmentés LocalStorage-ba (5 percenként)
  */
 function saveState() {
-    const log = JSON.parse(localStorage.getItem('spatial_logic_log') || '[]');
-    log.push({
-        t: new Date().toISOString(),
-        s: lastStability
-    });
-    // Csak az utolsó 100 mérést tartjuk meg v0.9-ben
-    if (log.length > 100) log.shift();
-    localStorage.setItem('spatial_logic_log', JSON.stringify(log));
+    try {
+        const log = JSON.parse(localStorage.getItem('spatial_logic_log') || '[]');
+        log.push({
+            t: new Date().toISOString(),
+            s: lastStability
+        });
+        if (log.length > 100) log.shift();
+        localStorage.setItem('spatial_logic_log', JSON.stringify(log));
+    } catch(e) { console.error("Save error", e); }
 }
+
+setInterval(saveState, 300000);

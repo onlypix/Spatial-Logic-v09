@@ -1,141 +1,116 @@
 /**
- * Spatial Logic v0.9 - Sensor Fix (Full Replace)
+ * Spatial Logic v0.9 - Pro Sensor Engine (Accel + Debug)
  */
 
 const CONFIG = {
-    k: 5.0,             // Magas érzékenység a mobil teszthez
-    windowSize: 60,     // Adatablak mérete
-    sampleRate: 50,     // ms
-    lowPassAlpha: 0.2   // Szűrés mértéke
+    k: 0.5,             // Kalibráció gyorsulás adatokhoz
+    windowSize: 40,     // Gyorsabb reakcióidő
+    sampleRate: 50,
+    lowPassAlpha: 0.3
 };
 
-let sensorData = { gyroX: [], gyroY: [] };
+let sensorData = { x: [], y: [], z: [] };
 let lastStability = 100;
 let isRunning = false;
 
-// UI Elemek hivatkozásai
 const stabilityEl = document.getElementById('stability-value');
 const stateEl = document.getElementById('state-label');
 const widgetEl = document.querySelector('.widget');
 const pulseEl = document.getElementById('focus-indicator');
 const overlay = document.getElementById('overlay-msg');
 
-/**
- * FŐ INDÍTÓ GOMB LOGIKA
- */
-window.addEventListener('click', function() {
+window.addEventListener('click', async function() {
     if (isRunning) return;
     
-    overlay.innerText = "Szenzorok inicializálása...";
+    overlay.innerText = "Szenzor kérés indítása...";
 
-    // 1. iOS / Safari specifikus engedélykérés
-    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-        DeviceMotionEvent.requestPermission()
-            .then(permission => {
-                if (permission === 'granted') {
-                    setupListeners();
-                } else {
-                    overlay.innerText = "HIBA: Szenzor elutasítva!";
-                }
-            })
-            .catch(err => {
-                overlay.innerText = "HIBA: " + err.message;
-            });
-    } else {
-        // 2. Android vagy asztali böngésző
-        setupListeners();
+    try {
+        if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+            const permission = await DeviceMotionEvent.requestPermission();
+            if (permission === 'granted') {
+                initSensors();
+            } else {
+                overlay.innerText = "HIBA: Engedély elutasítva.";
+            }
+        } else {
+            initSensors();
+        }
+    } catch (err) {
+        overlay.innerText = "Kivétel: " + err.message;
     }
 });
 
-/**
- * Eseménykezelők feliratkoztatása
- */
-function setupListeners() {
-    // Mobil böngészőkben a devicemotion az elsődleges forrás
+function initSensors() {
     window.addEventListener('devicemotion', handleMotion, true);
-    
-    // Biztonsági tartalék (egyes böngészők ezt jobban szeretik)
-    window.addEventListener('deviceorientation', (e) => {
-        if(!isRunning) {
-            isRunning = true;
-            overlay.style.display = 'none';
-        }
-    }, true);
-
-    overlay.innerText = "AKTÍV - Mozgasd a telefont!";
-    
-    // Ha 3 mp után sem jön adat, hibaüzenet
-    setTimeout(() => {
-        if(sensorData.gyroX.length === 0) {
-            overlay.innerText = "Nincs adat. Ellenőrizd a böngésző beállításait!";
-        } else {
-            overlay.style.display = 'none';
-        }
-    }, 3000);
+    overlay.style.backgroundColor = "rgba(0, 0, 150, 0.8)"; // Kék háttér = Aktív
+    overlay.innerText = "Szenzor figyelése... (Mozgasd a gépet)";
+    isRunning = true;
 }
 
-/**
- * Nyers adatok feldolgozása
- */
 function handleMotion(event) {
-    const rot = event.rotationRate;
-    if (!rot) return;
+    let acc = event.accelerationIncludingGravity || event.acceleration;
+    
+    // DEBUG: Kiírjuk a képernyőre, hogy jön-e adat
+    if (!acc || (acc.x === null && acc.y === null)) {
+        overlay.innerText = "Nincs gyorsulás adat a böngészőtől.";
+        return;
+    }
 
-    // Különböző böngészők más-más tengelyneveket használnak (alpha/beta/gamma)
-    const x = rot.alpha || rot.x || 0;
-    const y = rot.beta || rot.y || 0;
-    
-    if (x === 0 && y === 0) return; // Ne dolgozzunk üres adattal
+    const x = acc.x || 0;
+    const y = acc.y || 0;
+    const z = acc.z || 0;
 
-    isRunning = true;
+    // Ha jön adat, eltüntetjük az overlay-t
+    if (overlay.style.display !== 'none') {
+        overlay.style.display = 'none';
+    }
+
+    processData(x, y, z);
+}
+
+function processData(x, y, z) {
+    const fX = filter(x, sensorData.x);
+    const fY = filter(y, sensorData.y);
+    const fZ = filter(z, sensorData.z);
     
-    const filteredX = filter(x, sensorData.gyroX);
-    const filteredY = filter(y, sensorData.gyroY);
+    sensorData.x.push(fX);
+    sensorData.y.push(fY);
+    sensorData.z.push(fZ);
     
-    sensorData.gyroX.push(filteredX);
-    sensorData.gyroY.push(filteredY);
-    
-    // Adatablak kezelése
-    if (sensorData.gyroX.length > CONFIG.windowSize) {
-        sensorData.gyroX.shift();
-        sensorData.gyroY.shift();
+    if (sensorData.x.length > CONFIG.windowSize) {
+        sensorData.x.shift();
+        sensorData.y.shift();
+        sensorData.z.shift();
         calculateStability();
     }
 }
 
-/**
- * Aluláteresztő szűrő a jitter ellen
- */
 function filter(val, arr) {
     if (arr.length === 0) return val;
     return CONFIG.lowPassAlpha * val + (1 - CONFIG.lowPassAlpha) * arr[arr.length - 1];
 }
 
-/**
- * Stabilitási algoritmus
- */
 function calculateStability() {
-    const varX = getVariance(sensorData.gyroX);
-    const varY = getVariance(sensorData.gyroY);
-    const combinedStd = Math.sqrt(varX + varY);
+    const varX = getVariance(sensorData.x);
+    const varY = getVariance(sensorData.y);
+    const varZ = getVariance(sensorData.z);
     
-    // S = 100 * e^(-k * sigma)
-    const stability = Math.round(100 * Math.exp(-CONFIG.k * combinedStd));
+    // A gyorsulás szórásának összessége adja a mozgás intenzitását
+    const combinedVariance = varX + varY + varZ;
+    const combinedStd = Math.sqrt(combinedVariance);
+    
+    // Algoritmus: Ha nincs mozgás (csak gravitáció), a szórás közel 0.
+    const stability = Math.max(0, Math.min(100, Math.round(100 * Math.exp(-CONFIG.k * combinedStd))));
+    
     updateUI(stability);
 }
 
-/**
- * Variancia számítás
- */
 function getVariance(arr) {
     if (arr.length === 0) return 0;
     const mean = arr.reduce((a, b) => a + b) / arr.length;
     return arr.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / arr.length;
 }
 
-/**
- * HUD vizuális frissítése
- */
 function updateUI(s) {
     lastStability = s;
     stabilityEl.innerText = `${s}%`;
@@ -144,7 +119,7 @@ function updateUI(s) {
         stateEl.innerText = "FLOW";
         widgetEl.style.borderRightColor = "var(--accent-green)";
         pulseEl.classList.remove('pulse-active');
-    } else if (s > 50) {
+    } else if (s > 40) {
         stateEl.innerText = "STABLE";
         widgetEl.style.borderRightColor = "var(--accent-yellow)";
         pulseEl.classList.remove('pulse-active');
@@ -153,21 +128,4 @@ function updateUI(s) {
         widgetEl.style.borderRightColor = "var(--accent-red)";
         pulseEl.classList.add('pulse-active');
     }
-}
-
-/**
- * Adatmentés LocalStorage-ba (5 percenként)
- */
-function saveState() {
-    try {
-        const log = JSON.parse(localStorage.getItem('spatial_logic_log') || '[]');
-        log.push({
-            t: new Date().toISOString(),
-            s: lastStability
-        });
-        if (log.length > 100) log.shift();
-        localStorage.setItem('spatial_logic_log', JSON.stringify(log));
-    } catch(e) { console.error("Save error", e); }
-}
-
-setInterval(saveState, 300000);
+        }

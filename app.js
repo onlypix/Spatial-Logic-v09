@@ -1,157 +1,230 @@
 /**
- * Spatial Logic v1.1 - Professional Tier
- * Hibajavítás: UI Inicializálás, Szenzor Engedélyek és Adatpufferelés integrálva
+ * Spatial Logic v1.0 - Core Engine & Dashboard Layer
+ * Update: Added Algorithmic Stitching for Data Continuity
  */
 
 const CONFIG = {
-    K_FACTOR: 0.5,
-    STITCH_THRESHOLD_MS: 120000 // 2 perc feletti lyuknál interpolál
+    k: 0.5,
+    windowSize: 40,
+    lowPassAlpha: 0.3,
+    epochMs: 60000,         // 1 perc per epoch
+    maxEpochs: 2880,        // 48 óra (2880 perc) perzisztencia
+    stitchThreshold: 120000 // 2 perc feletti lyuknál pótolunk
 };
 
-let spatialData = JSON.parse(localStorage.getItem('sl_data')) || [];
-let motionBuffer = []; // Itt gyűjtjük a másodpercenkénti mikromozgásokat
+let sensorData = { x: [], y: [], z: [] };
+let lastStability = 100;
 let isRunning = false;
+let lastTapTime = 0;
 
-// --- 1. UI GYÚJTÁSKAPCSOLÓ (Koppintás érzékelése) ---
-document.addEventListener('click', async function startSensors() {
-    if (isRunning) return;
+// UI Hivatkozások
+const hudWidget = document.getElementById('hud-widget');
+const dashContent = document.getElementById('dashboard-content');
+const stabilityEl = document.getElementById('stability-value');
+const stateEl = document.getElementById('state-label');
+const trendArrow = document.getElementById('trend-arrow');
+const pulseEl = document.getElementById('focus-indicator');
+const overlay = document.getElementById('overlay-msg');
 
-    // iOS 13+ szenzor engedélykérés (Kritikus a Display/iOS eszközökön)
-    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+// Perzisztens adattároló betöltése (Circular Buffer)
+let cognitiveHistory = JSON.parse(localStorage.getItem('sl_history') || '[]');
+
+/**
+ * INIT ÉS DUPLA KOPPINTÁS KEZELÉS
+ */
+window.addEventListener('click', async function() {
+    const now = Date.now();
+    const timeSinceLastTap = now - lastTapTime;
+    
+    if (isRunning && timeSinceLastTap < 400 && timeSinceLastTap > 50) {
+        // Double Tap -> Toggle Dashboard
+        openDashboard();
+    } else if (!isRunning) {
+        // Első kattintás -> Rendszer indítása
+        overlay.innerText = "Szenzor inicializálása...";
         try {
-            const permission = await DeviceMotionEvent.requestPermission();
-            if (permission === 'granted') {
-                bootSystem();
+            if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+                const permission = await DeviceMotionEvent.requestPermission();
+                if (permission === 'granted') initEngine();
+                else overlay.innerText = "HIBA: Engedély megtagadva.";
             } else {
-                alert("A kognitív elemzéshez engedélyezni kell a mozgásérzékelőket.");
+                initEngine();
             }
-        } catch (error) {
-            console.error("Szenzor engedély hiba:", error);
-            bootSystem(); // Fallback
+        } catch (err) {
+            overlay.innerText = "Kivétel: " + err.message;
         }
-    } else {
-        // Android / Meta Native Webview
-        bootSystem();
     }
+    lastTapTime = now;
 });
 
-function bootSystem() {
+function initEngine() {
+    window.addEventListener('devicemotion', handleMotion, true);
+    overlay.style.display = 'none';
     isRunning = true;
     
-    // UI Frissítés: Eltüntetjük a kezdőképernyő szövegeit (Feltételezve, hogy az appod CSS-sel kezeli)
-    // Ha van egy 'init-screen' ID-d, ide teheted: document.getElementById('init-screen').style.display = 'none';
-    
-    initBackgroundHeartbeat();
-    
-    // Elindítjuk az adatgyűjtési ciklust (Percenként értékelünk)
-    setInterval(processEpoch, 60000);
-    
-    // Azonnali első UI frissítés, hogy eltűnjön a "--%"
-    processEpoch(); 
+    // Adatgyűjtés indítása percenként (Epoch rögzítés)
+    setInterval(recordEpoch, CONFIG.epochMs);
 }
 
-// --- 2. NYERS ADATGYŰJTÉS (IMU) ---
-window.addEventListener('devicemotion', (event) => {
-    if (!isRunning) return;
-    const acc = event.accelerationIncludingGravity;
-    if (acc && acc.x !== null) {
-        motionBuffer.push(acc);
-    }
-});
+/**
+ * SZENZOR FELDOLGOZÁS (Real-time Layer)
+ */
+function handleMotion(event) {
+    let acc = event.accelerationIncludingGravity || event.acceleration;
+    if (!acc || (acc.x === null && acc.y === null)) return;
 
-// --- 3. GEOLOCATION HEARTBEAT (Háttérben tartás okostelefonon) ---
-function initBackgroundHeartbeat() {
-    if ("geolocation" in navigator) {
-        navigator.geolocation.watchPosition(
-            () => { /* Csendes szívverés, tartja a JS szálat */ },
-            (err) => { console.warn("GPS Heartbeat korlátozva."); },
-            { enableHighAccuracy: false, maximumAge: 60000, timeout: 55000 }
-        );
+    const x = acc.x || 0; const y = acc.y || 0; const z = acc.z || 0;
+    
+    sensorData.x.push(filter(x, sensorData.x));
+    sensorData.y.push(filter(y, sensorData.y));
+    sensorData.z.push(filter(z, sensorData.z));
+    
+    if (sensorData.x.length > CONFIG.windowSize) {
+        sensorData.x.shift(); sensorData.y.shift(); sensorData.z.shift();
+        calculateRealTimeStability();
     }
 }
 
-// --- 4. KOGNITÍV MATEMATIKA (Epoch feldolgozás) ---
-function processEpoch() {
-    if (motionBuffer.length < 10 && spatialData.length > 0) {
-        // Ha nem volt elég mozgásadat (pl. zsebben aludt a teló), 
-        // csak frissítjük a UI-t, a lyukakat a 'getStitchedData' majd pótolja.
-        updateDashboard();
-        return;
+function filter(val, arr) {
+    if (arr.length === 0) return val;
+    return CONFIG.lowPassAlpha * val + (1 - CONFIG.lowPassAlpha) * arr[arr.length - 1];
+}
+
+function calculateRealTimeStability() {
+    const varX = getVariance(sensorData.x);
+    const varY = getVariance(sensorData.y);
+    const varZ = getVariance(sensorData.z);
+    
+    const combinedStd = Math.sqrt(varX + varY + varZ);
+    lastStability = Math.max(0, Math.min(100, Math.round(100 * Math.exp(-CONFIG.k * combinedStd))));
+    
+    updateMiniUI(lastStability);
+}
+
+function getVariance(arr) {
+    if (arr.length === 0) return 0;
+    const mean = arr.reduce((a, b) => a + b) / arr.length;
+    return arr.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / arr.length;
+}
+
+function updateMiniUI(s) {
+    stabilityEl.innerText = `${s}%`;
+    
+    if (s > 80) {
+        stateEl.innerText = "FLOW";
+        hudWidget.style.borderRightColor = "var(--accent-green)";
+        pulseEl.classList.remove('pulse-active');
+    } else if (s > 40) {
+        stateEl.innerText = "STABLE";
+        hudWidget.style.borderRightColor = "var(--accent-yellow)";
+        pulseEl.classList.remove('pulse-active');
+    } else {
+        stateEl.innerText = "FATIGUE";
+        hudWidget.style.borderRightColor = "var(--accent-red)";
+        pulseEl.classList.add('pulse-active');
     }
 
-    // Számoljuk a stabilitást a pufferből
-    const values = motionBuffer.map(s => Math.sqrt(s.x**2 + s.y**2 + s.z**2));
-    const mean = values.reduce((a, b) => a + b, 0) / values.length;
-    const sigma = Math.sqrt(values.map(x => Math.pow(x - mean, 2)).reduce((a, b) => a + b, 0) / values.length);
-    
-    const flowValue = Math.round(100 * Math.exp(-CONFIG.K_FACTOR * sigma));
-    
-    // Eltároljuk az új adatpontot
-    spatialData.push({
-        ts: Date.now(),
-        val: isNaN(flowValue) ? 0 : Math.min(100, Math.max(0, flowValue)), // Biztonsági korlát 0-100 között
-        isEstimated: false
+    if (cognitiveHistory.length > 0) {
+        const lastRec = cognitiveHistory[cognitiveHistory.length - 1].s;
+        if (s > lastRec + 5) trendArrow.innerText = "↑";
+        else if (s < lastRec - 5) trendArrow.innerText = "↓";
+        else trendArrow.innerText = "→";
+    }
+}
+
+/**
+ * ADATTÁROLÁS (Persistence Layer)
+ */
+function recordEpoch() {
+    cognitiveHistory.push({
+        t: Date.now(),
+        s: lastStability
     });
-
-    // Puffer ürítése a következő percig
-    motionBuffer = [];
     
-    // Mentés helyileg
-    localStorage.setItem('sl_data', JSON.stringify(spatialData));
-    
-    updateDashboard();
+    if (cognitiveHistory.length > CONFIG.maxEpochs) {
+        cognitiveHistory.shift();
+    }
+    localStorage.setItem('sl_history', JSON.stringify(cognitiveHistory));
 }
 
-// --- 5. ALGORITHMIC STITCHING (Adatpótlás lyukak esetén) ---
-function getStitchedData(rawEntries) {
-    if (rawEntries.length < 2) return rawEntries;
-    
-    let stitched = [];
-    for (let i = 0; i < rawEntries.length - 1; i++) {
-        stitched.push(rawEntries[i]);
-        let currentGap = rawEntries[i+1].ts - rawEntries[i].ts;
-        
-        // Ha 2 percnél nagyobb, de 1 óránál kisebb a lyuk
-        if (currentGap > CONFIG.STITCH_THRESHOLD_MS && currentGap < 3600000) { 
-            let gapCount = Math.floor(currentGap / 60000);
-            for (let j = 1; j <= gapCount; j++) {
-                stitched.push({
-                    ts: rawEntries[i].ts + (j * 60000),
-                    val: Math.round((rawEntries[i].val + rawEntries[i+1].val) / 2),
-                    isEstimated: true
-                });
+/**
+ * DASHBOARD & LAZY PROCESSING (With Interpolation)
+ */
+function openDashboard() {
+    if (hudWidget.classList.contains('full-view')) return;
+
+    hudWidget.classList.replace('mini-view', 'full-view');
+    dashContent.style.display = 'block';
+
+    processAndRenderDashboard();
+
+    setTimeout(() => {
+        hudWidget.classList.replace('full-view', 'mini-view');
+        dashContent.style.display = 'none';
+    }, 5000);
+}
+
+function processAndRenderDashboard() {
+    if (cognitiveHistory.length === 0) return;
+
+    // 1. STITCHING: Adatpótlás a lyukak kitöltéséhez
+    let stitchedHistory = [];
+    for (let i = 0; i < cognitiveHistory.length; i++) {
+        stitchedHistory.push(cognitiveHistory[i]);
+        if (i < cognitiveHistory.length - 1) {
+            let gap = cognitiveHistory[i+1].t - cognitiveHistory[i].t;
+            if (gap > CONFIG.stitchThreshold && gap < 3600000) { 
+                let missingMins = Math.floor(gap / 60000);
+                for (let j = 1; j <= missingMins; j++) {
+                    stitchedHistory.push({
+                        t: cognitiveHistory[i].t + (j * 60000),
+                        s: Math.round((cognitiveHistory[i].s + cognitiveHistory[i+1].s) / 2)
+                    });
+                }
             }
         }
     }
-    stitched.push(rawEntries[rawEntries.length - 1]);
-    return stitched;
-}
 
-// --- 6. UI RENDERELÉS ---
-function updateDashboard() {
-    const stitched = getStitchedData(spatialData);
-    if (stitched.length === 0) return;
-    
-    const latest = stitched[stitched.length - 1];
-    
-    // --- FELÜLETI ELEMEK FRISSÍTÉSE ---
-    // Cseréld ki az ID-kat, ha a te HTML-edben másképp vannak elnevezve!
-    const flowEl = document.querySelector('div:contains("FLOW")') || document.getElementById('flow-val'); 
-    // Mivel nem látom a pontos HTML ID-kat, egy generikus módosítót használok a feliratokra:
-    
-    // Ez a kód feltételezi, hogy a DOM-ba beírod a megfelelő értékeket.
-    // Ha a "FLOW" felirat alatt lévő div-et akarod frissíteni:
-    // document.getElementById('flow-percentage').innerText = `${latest.val}%`;
-    
-    // Kérlek, illeszd be ide a saját UI frissítő soraidat (document.getElementById... stb.),
-    // amikkel az előző verzióban a számokat írtad ki!
-    console.log(`[Spatial Logic] Aktuális Flow: ${latest.val}% | Adatpontok: ${stitched.length}`);
-    
-    renderGraph(stitched);
-}
+    // 2. Flow Index (stitched adatokból)
+    const flowCount = stitchedHistory.filter(ep => ep.s >= 80).length;
+    const flowIdx = Math.round((flowCount / stitchedHistory.length) * 100);
+    document.getElementById('kpi-flow').innerText = `${flowIdx}%`;
 
-function renderGraph(data) {
-    // Keresünk egy canvast vagy a te egyedi div-alapú grafikon rajzolódat
-    // Ide másold be azt a logikát, ami az előző app.js-ben megrajzolta az 5 oszlopot!
-    // A 'data' tömb most már tartalmazza az egyenletesen elosztott, lyukmentes adatokat.
-            }
+    // 3. Recovery Rate (stitched adatokból)
+    let recoveryMins = 0;
+    let recoveryEvents = 0;
+    let fatigueStart = null;
+    for (let i = 0; i < stitchedHistory.length; i++) {
+        if (stitchedHistory[i].s <= 40 && fatigueStart === null) {
+            fatigueStart = i;
+        } else if (stitchedHistory[i].s >= 80 && fatigueStart !== null) {
+            recoveryMins += (i - fatigueStart);
+            recoveryEvents++;
+            fatigueStart = null;
+        }
+    }
+    const avgRec = recoveryEvents > 0 ? Math.round(recoveryMins / recoveryEvents) : 0;
+    document.getElementById('kpi-recovery').innerText = avgRec > 0 ? `${avgRec}m` : "--";
+
+    // 4. Histogram Renderelés (Utolsó 5 óra a pótolt adatok alapján)
+    const histContainer = document.getElementById('histogram');
+    histContainer.innerHTML = ''; 
+    for (let i = 4; i >= 0; i--) {
+        const startIdx = Math.max(0, stitchedHistory.length - (i + 1) * 60);
+        const endIdx = Math.max(0, stitchedHistory.length - i * 60);
+        let avg = 0;
+        if (startIdx !== endIdx) {
+            const block = stitchedHistory.slice(startIdx, endIdx);
+            avg = block.reduce((sum, ep) => sum + ep.s, 0) / block.length;
+        }
+        const bar = document.createElement('div');
+        bar.className = 'bar';
+        bar.style.height = `${Math.max(2, avg)}%`;
+        bar.style.backgroundColor = avg >= 80 ? 'var(--accent-green)' : (avg > 40 ? 'var(--accent-yellow)' : 'var(--accent-red)');
+        histContainer.appendChild(bar);
+    }
+
+    // 5. Burnout Alert (Utolsó 3 óra a pótolt adatok alapján)
+    const alertMsg = document.getElementById('alert-msg');
+    const last3Hours = stitchedHistory.slice(-18
+                        

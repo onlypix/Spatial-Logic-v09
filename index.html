@@ -1,14 +1,181 @@
 <!DOCTYPE html>
-<html lang="hu">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Spatial Logic v1.2</title>
+    <title>Life Coaching v2.0</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="wearable-display" content="width=480, height=480, safe-zone=20">
-    <link rel="stylesheet" href="style.css">
+    <style>
+        :root {
+            --meta-blue: #0064e0;
+            --meta-green: #00ff88;
+            --meta-yellow: #ffcc00;
+            --meta-red: #ff4444;
+            /* Official Glassmorphism variables for pass-through blending */
+            --glass-bg: rgba(20, 28, 47, 0.45);
+            --glass-border: rgba(255, 255, 255, 0.15);
+            --text-primary: #ffffff;
+            --text-secondary: #94a3b8;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #000000;
+            color: var(--text-primary);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden;
+            width: 480px;
+            height: 480px;
+            user-select: none;
+        }
+
+        /* Meta OS Glassmorphic Container */
+        .meta-widget {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 16px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+        }
+
+        .mini-view {
+            width: 140px;
+            border-radius: 30px; /* Pill layout for compact view */
+        }
+
+        .full-view {
+            width: 380px;
+        }
+
+        .header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: var(--text-secondary);
+        }
+
+        #stability-value {
+            font-size: 44px;
+            font-weight: 700;
+            line-height: 1.1;
+            margin: 4px 0;
+            background: linear-gradient(135deg, #ffffff, #94a3b8);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        #focus-indicator {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            border: 2px solid transparent;
+            border-radius: 20px;
+            pointer-events: none;
+            transition: border-color 0.3s;
+        }
+
+        .pulse-active {
+            animation: metaPulse 2s infinite;
+            border-color: var(--meta-red) !important;
+        }
+
+        @keyframes metaPulse {
+            0% { box-shadow: inset 0 0 0 0 rgba(255, 68, 68, 0.4); }
+            50% { box-shadow: inset 0 0 15px 2px rgba(255, 68, 68, 0.2); }
+            100% { box-shadow: inset 0 0 0 0 rgba(255, 68, 68, 0.4); }
+        }
+
+        /* Dashboard Interface Matrix */
+        #dashboard-content {
+            margin-top: 16px;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            padding-top: 14px;
+        }
+
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-bottom: 14px;
+        }
+
+        .kpi-box {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 8px;
+            text-align: center;
+        }
+
+        .kpi-label {
+            font-size: 8px;
+            font-weight: 700;
+            color: var(--text-secondary);
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        .kpi-val {
+            font-size: 16px;
+            font-weight: 700;
+            color: #ffffff;
+            margin-top: 2px;
+        }
+
+        .chart-title {
+            font-size: 9px;
+            font-weight: 700;
+            color: var(--text-secondary);
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .chart-container {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            overflow: hidden;
+        }
+
+        .meta-alert-box {
+            margin-top: 12px;
+            background: rgba(0, 255, 136, 0.06);
+            border: 1px solid rgba(0, 255, 136, 0.15);
+            border-radius: 10px;
+            padding: 8px 12px;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--meta-green);
+            transition: all 0.3s;
+        }
+
+        #overlay-msg {
+            position: absolute;
+            bottom: 30px;
+            width: 100%;
+            text-align: center;
+            color: var(--text-primary);
+            font-size: 14px;
+            font-weight: 500;
+            background: rgba(10, 15, 29, 0.85);
+            backdrop-filter: blur(8px);
+            padding: 12px 0;
+            letter-spacing: 0.5px;
+            cursor: pointer;
+        }
+    </style>
 </head>
 <body>
-    <div id="hud-widget" class="widget mini-view">
+    <div id="hud-widget" class="meta-widget mini-view">
         <div id="focus-indicator"></div>
         
         <div class="header-row">
@@ -20,25 +187,29 @@
         <div id="dashboard-content" style="display: none;">
             <div class="kpi-grid">
                 <div class="kpi-box">
-                    <div class="kpi-label">FLOW INDEX</div>
+                    <div class="kpi-label">Flow Index</div>
                     <div class="kpi-val" id="kpi-flow">--%</div>
                 </div>
                 <div class="kpi-box">
-                    <div class="kpi-label">RECOVERY</div>
-                    <div class="kpi-val" id="kpi-recovery">--m</div>
+                    <div class="kpi-label">Recoveries</div>
+                    <div class="kpi-val" id="kpi-recovery">--</div>
+                </div>
+                <div class="kpi-box" style="border: 1px solid rgba(0, 200, 255, 0.2);">
+                    <div class="kpi-label" style="color: #00c8ff;">Focus Left</div>
+                    <div class="kpi-val" id="kpi-tte" style="color: #00c8ff;">--m</div>
                 </div>
             </div>
 
-            <div class="chart-title">24H COGNITIVE FLOW & TARGET</div>
-            <div class="chart-container" style="position: relative; width: 100%; height: 120px; margin-top: 10px;">
-                <canvas id="cognitiveChart" width="400" height="120"></canvas>
+            <div class="chart-title">24H COGNITIVE FLOW vs TARGET MODEL</div>
+            <div class="chart-container" style="position: relative; width: 100%; height: 120px;">
+                <canvas id="cognitiveChart" width="346" height="120"></canvas>
             </div>
             
-            <div id="alert-msg" class="alert-msg"></div>
+            <div id="alert-msg" class="meta-alert-box">ANALYZING TRENDS...</div>
         </div>
     </div>
 
-    <div id="overlay-msg">Koppints a szenzor indításához</div>
+    <div id="overlay-msg">Tap Screen to Initialize Systems</div>
 
     <script src="app.js"></script>
 </body>

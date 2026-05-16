@@ -1,10 +1,10 @@
 {
-  "name": "Life Coaching Engine",
-  "short_name": "LifeCoach",
+  "name": "Spatial Logic Dashboard",
+  "short_name": "S-Logic",
   "start_url": "index.html",
   "display": "standalone",
-  "background_color": "#0a0f1d",
-  "theme_color": "#0064e0",
+  "background_color": "#000000",
+  "theme_color": "#00ff88",
   "icons": [
     {
       "src": "icon.png",

@@ -25,8 +25,8 @@
             color: var(--text-primary);
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             overflow: hidden;
-            width: 480px;
-            height: 480px;
+            width: 100vw;
+            height: 100vh;
             user-select: none;
         }
 
@@ -51,7 +51,8 @@
         }
 
         .full-view {
-            width: 380px;
+            width: calc(100% - 40px);
+            max-width: 346px;
         }
 
         .header-row {
@@ -202,7 +203,7 @@
 
             <div class="chart-title">24H COGNITIVE FLOW vs TARGET MODEL</div>
             <div class="chart-container" style="position: relative; width: 100%; height: 120px;">
-                <canvas id="cognitiveChart" width="346" height="120"></canvas>
+                <canvas id="cognitiveChart" style="width: 100%; height: 100%; display: block;"></canvas>
             </div>
             
             <div id="alert-msg" class="meta-alert-box">ANALYZING TRENDS...</div>

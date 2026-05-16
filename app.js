@@ -1,15 +1,10 @@
-/**
- * Life Coaching v2.0 - Core Engine & Spatial UI Layer
- * Fully localized, augmented with TTE logic & Delta rendering profiles.
- */
-
 const CONFIG = {
     k: 0.5,
     windowSize: 40,
     lowPassAlpha: 0.3,
     epochMs: 60000,         
-    maxEpochs: 1440,        // Fixed 24-hour circular telemetry stream
-    stitchThreshold: 120000
+    maxEpochs: 1440,
+    radius: 55 // SVG circle radius
 };
 
 let sensorData = { x: [], y: [], z: [] };
@@ -17,18 +12,14 @@ let lastStability = 100;
 let isRunning = false;
 let lastTapTime = 0;
 
-// Spatial UI Registry
 const hudWidget = document.getElementById('hud-widget');
 const dashContent = document.getElementById('dashboard-content');
-const stabilityEl = document.getElementById('stability-value');
-const stateEl = document.getElementById('state-label');
-const trendArrow = document.getElementById('trend-arrow');
-const pulseEl = document.getElementById('focus-indicator');
+const miniAnchor = document.getElementById('mini-anchor');
 const overlay = document.getElementById('overlay-msg');
 
 let cognitiveHistory = JSON.parse(localStorage.getItem('sl_history') || '[]');
 
-// --- SYSTEM INITIALIZATION HANDLER ---
+// --- CORE SYSTEM INITIALIZER ---
 window.addEventListener('click', async function() {
     const now = Date.now();
     const timeSinceLastTap = now - lastTapTime;
@@ -36,12 +27,12 @@ window.addEventListener('click', async function() {
     if (isRunning && timeSinceLastTap < 400 && timeSinceLastTap > 50) {
         toggleDashboard();
     } else if (!isRunning) {
-        overlay.innerText = "Initializing Wearable Toolkit SDK...";
+        overlay.innerText = "Initializing Spatial HUD Interface...";
         try {
             if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
                 const permission = await DeviceMotionEvent.requestPermission();
                 if (permission === 'granted') initEngine();
-                else overlay.innerText = "CRITICAL ERROR: Sensor Permission Denied.";
+                else overlay.innerText = "ERROR: Sensor Permission Denied.";
             } else {
                 initEngine();
             }
@@ -54,16 +45,9 @@ function initEngine() {
     window.addEventListener('devicemotion', handleMotion, true);
     overlay.style.display = 'none';
     isRunning = true;
-    
-    // Low-energy geolocation tracking vector acting as background state persistent pulse
-    if ("geolocation" in navigator) {
-        navigator.geolocation.watchPosition(()=>{}, ()=>{}, {enableHighAccuracy:false});
-    }
-
     setInterval(recordEpoch, CONFIG.epochMs);
 }
 
-// --- MOTION SIGNAL INTERCEPTOR ---
 function handleMotion(event) {
     let acc = event.accelerationIncludingGravity || event.acceleration;
     if (!acc || (acc.x === null && acc.y === null)) return;
@@ -90,31 +74,33 @@ function calculateRealTimeStability() {
     };
     const combinedStd = Math.sqrt(getVar(sensorData.x) + getVar(sensorData.y) + getVar(sensorData.z));
     lastStability = Math.max(0, Math.min(100, Math.round(100 * Math.exp(-CONFIG.k * combinedStd))));
-    updateMiniUI(lastStability);
+    
+    document.getElementById('mini-value').innerText = `${lastStability}%`;
+    if(hudWidget.classList.contains('full-view')) {
+        updateCircularBattery(lastStability);
+    }
 }
 
-function updateMiniUI(s) {
-    stabilityEl.innerText = `${s}%`;
+// --- UPDATE SVG CIRCULAR GAUGE ---
+function updateCircularBattery(score) {
+    document.getElementById('bat-num').innerText = `${score}%`;
+    const circle = document.getElementById('moving-arc');
+    const circumference = 2 * Math.PI * CONFIG.radius;
     
-    if (s > 80) {
-        stateEl.innerText = "FLOW";
-        hudWidget.style.borderColor = "rgba(0, 255, 136, 0.4)";
-        pulseEl.classList.remove('pulse-active');
-    } else if (s > 40) {
-        stateEl.innerText = "STABLE";
-        hudWidget.style.borderColor = "rgba(255, 204, 0, 0.4)";
-        pulseEl.classList.remove('pulse-active');
-    } else {
-        stateEl.innerText = "FATIGUE";
-        hudWidget.style.borderColor = "rgba(255, 68, 68, 0.4)";
-        pulseEl.classList.add('pulse-active');
-    }
+    circle.style.strokeDasharray = `${circumference} ${circumference}`;
+    const offset = circumference - (score / 100) * circumference;
+    circle.style.strokeDashoffset = offset;
 
-    if (cognitiveHistory.length > 0) {
-        const lastRec = cognitiveHistory[cognitiveHistory.length - 1].s;
-        if (s > lastRec + 5) trendArrow.innerText = "↑";
-        else if (s < lastRec - 5) trendArrow.innerText = "↓";
-        else trendArrow.innerText = "→";
+    const statusTag = document.getElementById('bat-status');
+    if (score > 80) {
+        statusTag.innerText = "Túlteljesítés";
+        statusTag.style.color = "var(--meta-green)";
+    } else if (score > 40) {
+        statusTag.innerText = "Optimális";
+        statusTag.style.color = "var(--meta-yellow)";
+    } else {
+        statusTag.innerText = "Kimerülés veszély";
+        statusTag.style.color = "var(--meta-red)";
     }
 }
 
@@ -122,31 +108,26 @@ function recordEpoch() {
     cognitiveHistory.push({ t: Date.now(), s: lastStability });
     if (cognitiveHistory.length > CONFIG.maxEpochs) cognitiveHistory.shift();
     localStorage.setItem('sl_history', JSON.stringify(cognitiveHistory));
+    if (hudWidget.classList.contains('full-view')) processAndRenderDashboard();
 }
 
-// --- DISPLAY TRANSFORM COORDINATOR ---
 function toggleDashboard() {
     if (hudWidget.classList.contains('full-view')) {
-        closeDashboard();
+        hudWidget.classList.replace('full-view', 'mini-view');
+        dashContent.style.display = 'none';
+        miniAnchor.style.display = 'block';
     } else {
         hudWidget.classList.replace('mini-view', 'full-view');
         dashContent.style.display = 'block';
+        miniAnchor.style.display = 'none';
+        updateCircularBattery(lastStability);
         processAndRenderDashboard();
     }
 }
 
-function closeDashboard() {
-    hudWidget.classList.replace('full-view', 'mini-view');
-    dashContent.style.display = 'none';
-}
-
-// --- MATHEMATICAL AND GRAPHICAL CORE ENGINE ---
+// --- MATHEMATICAL WAVEFORM GRAPHICS MOTOR ---
 function processAndRenderDashboard() {
-    if (cognitiveHistory.length === 0) return;
-
     const canvas = document.getElementById('cognitiveChart');
-    
-    // Dynamic coordinate synchronization vector patch for Meta OS Layout consistency
     canvas.width = canvas.parentElement.clientWidth;
     canvas.height = canvas.parentElement.clientHeight;
     
@@ -154,18 +135,15 @@ function processAndRenderDashboard() {
     const w = canvas.width;
     const h = canvas.height;
 
-    // 1. Telemetry Synthesis Pipeline (22 Hours Past, 2 Hours Forecast horizon)
-    let full24h = [];
     const nowMs = Date.now();
-    const splitIndex = 1320; // 22 hours mark inside 1440 mins buffer array
+    const splitIndex = 1100; // Left bias split matrix configuration
+    let full24h = [];
 
     for (let i = 0; i < 1440; i++) {
         let ts = nowMs - (splitIndex - i) * 60000;
         let realPoint = cognitiveHistory.find(p => Math.abs(p.t - ts) < 30000);
-        
-        // Circadian baseline optimization target matrix formula
         let hour = new Date(ts).getHours();
-        let targetS = 65 + 20 * Math.sin((hour - 8) * Math.PI / 12); 
+        let targetS = 60 + 22 * Math.sin((hour - 7) * Math.PI / 12); 
 
         full24h.push({
             val: i <= splitIndex && realPoint ? realPoint.s : null,
@@ -174,179 +152,110 @@ function processAndRenderDashboard() {
         });
     }
 
-    // 2. TTE (Time-To-Exhaustion) Linear Projection Engine
-    let minutesToDeficit = 120; // Default max limit
+    let minutesToDeficit = 90; // TTE projection default anchor
     if (cognitiveHistory.length >= 10) {
         const segment = cognitiveHistory.slice(-10);
         let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
         let n = segment.length;
         for (let i = 0; i < n; i++) {
-            sumX += i;
-            sumY += segment[i].s;
-            sumXY += i * segment[i].s;
-            sumXX += i * i;
+            sumX += i; sumY += segment[i].s; sumXY += i * segment[i].s; sumXX += i * i;
         }
         let slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-        if (slope < -0.1) {
-            let currentS = segment[n-1].s;
-            minutesToDeficit = Math.max(5, Math.round((40 - currentS) / slope));
-        }
+        if (slope < -0.05) minutesToDeficit = Math.max(5, Math.round((40 - segment[n-1].s) / slope));
     }
 
-    // 3. UI Analytics Metrics Refresh
+    // Refresh Pill Text Nodes
     const totalFlowCount = cognitiveHistory.filter(p => p.s >= 80).length;
-    document.getElementById('kpi-flow').innerText = Math.round((totalFlowCount / Math.max(1, cognitiveHistory.length)) * 100) + "%";
-    
-    let totalRecoveries = cognitiveHistory.filter((p, i) => i > 0 && p.s > 75 && cognitiveHistory[i-1].s < 45).length;
-    document.getElementById('kpi-recovery').innerText = totalRecoveries;
-    document.getElementById('kpi-tte').innerText = minutesToDeficit >= 120 ? "1.5h+" : minutesToDeficit + "m";
+    document.getElementById('pill-flow').innerText = Math.round((totalFlowCount / Math.max(1, cognitiveHistory.length)) * 100) + "%";
+    document.getElementById('pill-recovery').innerText = cognitiveHistory.filter((p, i) => i > 0 && p.s > 75 && cognitiveHistory[i-1].s < 45).length + "m";
+    document.getElementById('pill-tte').innerText = minutesToDeficit >= 90 ? "+1.5h" : minutesToDeficit + "m";
 
-    // 4. Dual-Pass Canvas Surface Rasterizer
     ctx.clearRect(0, 0, w, h);
-    const getXCoord = (index) => (index / 1440) * w;
-    const getYCoord = (val) => h - (val / 100) * h;
+    const getX = (index) => (index / 1440) * w;
+    const getY = (val) => h - (val / 100) * h;
+    let nowX = getX(splitIndex);
 
-    let nowX = getXCoord(splitIndex);
+    // Baseline area gradient generation (Ghost Blue Background Envelope)
+    let areaGlow = ctx.createLinearGradient(0, 0, 0, h);
+    areaGlow.addColorStop(0, 'rgba(0, 100, 224, 0.25)');
+    areaGlow.addColorStop(1, 'rgba(0, 50, 150, 0.0)');
 
-    // Context Array Parsing Strategy
-    let lastRealX = 0;
-    let lastRealY = h;
-    let hasRealData = false;
+    // Path setup for target model
+    ctx.beginPath();
+    ctx.moveTo(getX(0), h);
+    full24h.forEach((p, i) => ctx.lineTo(getX(i), getY(p.target)));
+    ctx.lineTo(getX(1439), h);
+    ctx.fillStyle = areaGlow;
+    ctx.fill();
 
+    // Intersection Differential Filler (Gold Delta Surplus Mapping)
+    ctx.beginPath();
+    let tracking = false;
     full24h.forEach((p, i) => {
-        if (p.isReal) {
-            lastRealX = getXCoord(i);
-            lastRealY = getYCoord(p.val);
-            hasRealData = true;
-        }
-    });
-
-    // Sub-routine: Extrapolate trajectory path into the future window boundary
-    if (hasRealData && minutesToDeficit < 120) {
-        let currentS = full24h[splitIndex].isReal ? full24h[splitIndex].val : lastStability;
-        for(let i = splitIndex + 1; i < 1440; i++) {
-            let elapsed = i - splitIndex;
-            let drop = (elapsed / minutesToDeficit) * (currentS - 40);
-            full24h[i].val = Math.max(10, currentS - drop);
-        }
-    }
-
-    // PASS 1: Structural Fill & Delta-Area Color Blending Shader
-    for (let i = 0; i < 1440 - 1; i++) {
-        let x1 = getXCoord(i);
-        let x2 = getXCoord(i + 1);
-        let t1 = getYCoord(full24h[i].target);
-        let t2 = getYCoord(full24h[i + 1].target);
-        
-        let v1 = full24h[i].val !== null ? getYCoord(full24h[i].val) : null;
-        let v2 = full24h[i+1].val !== null ? getYCoord(full24h[i+1].val) : null;
-
-        // Render target model envelope background bounds
-        ctx.beginPath();
-        ctx.moveTo(x1, h);
-        ctx.lineTo(x1, t1);
-        ctx.lineTo(x2, t2);
-        ctx.lineTo(x2, h);
-        ctx.fillStyle = 'rgba(0, 100, 224, 0.04)';
-        ctx.fill();
-
-        // Calculate dynamic intersection offset vectors to spray fill the mathematical differential
-        if (v1 !== null && v2 !== null) {
-            ctx.beginPath();
-            ctx.moveTo(x1, t1);
-            ctx.lineTo(x2, t2);
-            ctx.lineTo(x2, v2);
-            ctx.lineTo(x1, v1);
-            
-            // Check performance metric delta
-            if (v1 < t1) {
-                ctx.fillStyle = 'rgba(255, 204, 0, 0.08)'; // Gold/Amethyst Surplus Zone
+        if (i <= splitIndex && p.isReal) {
+            let cx = getX(i);
+            let cy = getY(p.val);
+            let ty = getY(p.target);
+            if (cy < ty) { // Surplus state condition
+                if (!tracking) { ctx.beginPath(); ctx.moveTo(cx, ty); tracking = true; }
+                ctx.lineTo(cx, cy);
             } else {
-                ctx.fillStyle = 'rgba(255, 68, 68, 0.08)';  // Deficit/Overload Cinnabar Zone
+                if (tracking) { ctx.lineTo(cx, ty); ctx.fillStyle = 'rgba(255, 204, 0, 0.15)'; ctx.fill(); tracking = false; }
             }
-            ctx.fill();
         }
-    }
-
-    // PASS 2: Vector Path Envelopes Drawing
-    // Target Baseline Model Contour
-    ctx.beginPath();
-    full24h.forEach((p, i) => {
-        let x = getXCoord(i);
-        let y = getYCoord(p.target);
-        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     });
-    ctx.strokeStyle = 'rgba(0, 100, 224, 0.4)';
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([4, 4]);
-    ctx.stroke();
-    ctx.setLineDash([]);
 
-    // Actual Data Telemetry Line
+    // Real-Time Smooth Vector Stroke (Actual Light Green Track)
     ctx.beginPath();
-    let firstReal = true;
-    for(let i = 0; i <= splitIndex; i++) {
-        if (full24h[i].isReal) {
-            let x = getXCoord(i);
-            let y = getYCoord(full24h[i].val);
-            if (firstReal) { ctx.moveTo(x, y); firstReal = false; } else ctx.lineTo(x, y);
+    let first = true;
+    full24h.forEach((p, i) => {
+        if (i <= splitIndex && p.isReal) {
+            if (first) { ctx.moveTo(getX(i), getY(p.val)); first = false; }
+            else ctx.lineTo(getX(i), getY(p.val));
         }
-    }
+    });
     ctx.strokeStyle = '#00ff88';
-    ctx.lineWidth = 2.5;
-    ctx.shadowBlur = 6;
+    ctx.lineWidth = 3;
+    ctx.shadowBlur = 8;
     ctx.shadowColor = '#00ff88';
     ctx.stroke();
     ctx.shadowBlur = 0;
 
-    // Projected Future Trajectory Vector Line
-    if (hasRealData) {
-        ctx.beginPath();
-        ctx.moveTo(lastRealX, lastRealY);
-        for(let i = splitIndex + 1; i < 1440; i++) {
-            if(full24h[i].val !== null) {
-                ctx.lineTo(getXCoord(i), getYCoord(full24h[i].val));
-            }
-        }
-        ctx.strokeStyle = 'rgba(255, 204, 0, 0.6)';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([3, 3]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-    }
-
-    // PASS 3: NOW Spatial Temporal Axis Overlay
+    // Predictive Linear Horizon Dash Stroke (Dotted Yellow Forecast)
+    let lastRealX = nowX, lastRealY = getY(lastStability);
     ctx.beginPath();
-    ctx.moveTo(nowX, 0);
-    ctx.lineTo(nowX, h);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.moveTo(lastRealX, lastRealY);
+    for (let i = splitIndex + 1; i < 1440; i++) {
+        let elapsed = i - splitIndex;
+        let pVal = Math.max(20, lastStability - (elapsed / minutesToDeficit) * (lastStability - 40));
+        ctx.lineTo(getX(i), getY(pVal));
+    }
+    ctx.strokeStyle = 'rgba(255, 204, 0, 0.7)';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Spatial Vertical Temporal Axis Pin (NOW Line)
+    ctx.beginPath();
+    ctx.moveTo(nowX, 0); ctx.lineTo(nowX, h);
+    ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 2;
     ctx.stroke();
 
-    // Render NOW Context Flag Tag
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 8px sans-serif';
-    ctx.fillText('NOW', nowX - 24, 12); // Dynamic horizontal safety buffer text offset adjustment
+    ctx.font = 'bold 9px sans-serif';
+    ctx.fillText('NOW', nowX - 28, 14);
 
-    // 5. NLP Contextual Life Coaching Alert Parser
+    // Adaptive Alert Engine Update
     const alertBox = document.getElementById('alert-msg');
-    const recentAvg = cognitiveHistory.slice(-30).reduce((a, b) => a + b.s, 0) / Math.max(1, Math.min(30, cognitiveHistory.length));
-    
-    if (recentAvg < 45 || minutesToDeficit < 30) {
-        alertBox.innerText = "» COGNITIVE SURCHARGE: 5-MIN RECOVERY MANDATORY";
-        alertBox.style.background = "rgba(255, 68, 68, 0.1)";
-        alertBox.style.borderColor = "rgba(255, 68, 68, 0.3)";
-        alertBox.style.color = "var(--meta-red)";
-    } else if (lastStability > full24h[splitIndex].target + 5) {
-        alertBox.innerText = "» COGNITIVE SURPLUS: EXCELLENT MOMENTUM. KEEP FOCUS.";
-        alertBox.style.background = "rgba(0, 255, 136, 0.06)";
-        alertBox.style.borderColor = "rgba(0, 255, 136, 0.2)";
+    if (lastStability > full24h[splitIndex].target) {
+        alertBox.innerText = "» Surpassing model. Good momentum.";
         alertBox.style.color = "var(--meta-green)";
+        alertBox.style.background = "rgba(0, 255, 136, 0.05)";
     } else {
-        alertBox.innerText = "» COGNITIVE PACE STABLE: BALANCE MAINTAINED.";
-        alertBox.style.background = "rgba(0, 100, 224, 0.08)";
-        alertBox.style.borderColor = "rgba(0, 100, 224, 0.2)";
-        alertBox.style.color = "#00c8ff";
+        alertBox.innerText = "» Approaching baseline threshold. Monitor overhead.";
+        alertBox.style.color = "var(--meta-yellow)";
+        alertBox.style.background = "rgba(255, 204, 0, 0.05)";
     }
-        }
-    
+}

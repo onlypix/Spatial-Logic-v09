@@ -1,275 +1,44 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="hu">
 <head>
     <meta charset="UTF-8">
-    <title>Spatial Logic Dashboard v2.0</title>
+    <title>Spatial Logic v1.2</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <style>
-        :root {
-            --meta-blue: #0064e0;
-            --meta-green: #00ff88;
-            --meta-yellow: #ffcc00;
-            --meta-red: #ff4444;
-            --glass-bg: rgba(20, 28, 47, 0.45);
-            --glass-border: rgba(255, 255, 255, 0.15);
-            --text-primary: #ffffff;
-            --text-secondary: #94a3b8;
-        }
-
-        body {
-            margin: 0;
-            padding: 0;
-            background-color: #000000;
-            color: var(--text-primary);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            overflow: hidden;
-            width: 100vw;
-            height: 100vh;
-            user-select: none;
-        }
-
-        .meta-widget {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            background: var(--glass-bg);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border: 1px solid var(--glass-border);
-            border-radius: 24px;
-            padding: 20px;
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
-            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
-            box-sizing: border-box;
-        }
-
-        .mini-view {
-            width: 140px;
-            border-radius: 30px;
-            cursor: pointer;
-        }
-
-        .full-view {
-            width: calc(100% - 40px);
-            max-width: 680px;
-        }
-
-        .widget-title {
-            font-size: 16px;
-            font-weight: 600;
-            margin-bottom: 16px;
-            letter-spacing: 0.5px;
-        }
-
-        /* Two-Column Grid Setup */
-        .dashboard-grid {
-            display: grid;
-            grid-template-columns: 200px 1fr;
-            gap: 20px;
-        }
-
-        /* Left Column: Cognitive Battery */
-        .battery-box {
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            border-radius: 16px;
-            padding: 16px;
-            text-align: center;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .section-label {
-            font-size: 10px;
-            font-weight: 700;
-            color: var(--text-secondary);
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-            margin-bottom: 12px;
-        }
-
-        .svg-container {
-            position: relative;
-            width: 140px;
-            height: 140px;
-        }
-
-        .svg-container svg {
-            transform: rotate(-90deg);
-        }
-
-        .progress-bg {
-            fill: none;
-            stroke: rgba(255, 255, 255, 0.08);
-            stroke-width: 8;
-        }
-
-        .progress-bar {
-            fill: none;
-            stroke: var(--meta-green);
-            stroke-width: 8;
-            stroke-linecap: round;
-            transition: stroke-dashoffset 0.5s ease;
-        }
-
-        .battery-text {
-            position: absolute;
-            top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            text-align: center;
-        }
-
-        .battery-number {
-            font-size: 32px;
-            font-weight: 700;
-        }
-
-        .battery-subtext {
-            font-size: 9px;
-            color: var(--meta-green);
-            font-weight: 600;
-            margin-top: 2px;
-        }
-
-        .battery-footer {
-            font-size: 11px;
-            font-weight: 500;
-            margin-top: 14px;
-        }
-
-        .battery-status-tag {
-            font-size: 10px;
-            color: var(--meta-green);
-            margin-top: 2px;
-        }
-
-        /* Right Column: Chart & Sub-KPIs */
-        .main-display {
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
-        }
-
-        .chart-wrapper {
-            background: rgba(0, 0, 0, 0.2);
-            border-radius: 16px;
-            border: 1px solid rgba(255, 255, 255, 0.05);
-            position: relative;
-            width: 100%;
-            height: 150px;
-            overflow: hidden;
-        }
-
-        #cognitiveChart {
-            width: 100%;
-            height: 100%;
-            display: block;
-        }
-
-        /* Bottom Row Pill Badges */
-        .pill-row {
-            display: flex;
-            gap: 8px;
-        }
-
-        .meta-pill {
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 20px;
-            padding: 6px 14px;
-            font-size: 10px;
-            font-weight: 600;
-            color: var(--text-secondary);
-        }
-
-        .meta-pill span {
-            color: #ffffff;
-            margin-left: 4px;
-        }
-
-        .pill-highlight {
-            border-color: rgba(255, 204, 0, 0.3);
-            background: rgba(255, 204, 0, 0.04);
-        }
-        .pill-highlight span {
-            color: var(--meta-yellow);
-        }
-
-        /* Alert System Box */
-        .meta-alert {
-            background: rgba(0, 255, 136, 0.05);
-            border: 1px solid rgba(0, 255, 136, 0.15);
-            border-radius: 12px;
-            padding: 8px 14px;
-            font-size: 11px;
-            font-weight: 500;
-            color: var(--meta-green);
-        }
-
-        #overlay-msg {
-            position: absolute;
-            bottom: 30px;
-            width: 100%;
-            text-align: center;
-            color: var(--text-primary);
-            font-size: 14px;
-            font-weight: 500;
-            background: rgba(10, 15, 29, 0.85);
-            backdrop-filter: blur(8px);
-            padding: 12px 0;
-            cursor: pointer;
-        }
-    </style>
+    <meta name="wearable-display" content="width=480, height=480, safe-zone=20">
+    <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
-    <div id="hud-widget" class="meta-widget mini-view">
-        <div id="mini-anchor" style="text-align: center;">
-            <div style="font-size: 9px; font-weight: 700; color: var(--text-secondary);">FLOW</div>
-            <div id="mini-value" style="font-size: 28px; font-weight: 700;">--%</div>
+    <div id="hud-widget" class="widget mini-view">
+        <div id="focus-indicator"></div>
+        
+        <div class="header-row">
+            <div id="state-label">INITIALIZING</div>
+            <div id="trend-arrow">-</div>
         </div>
+        <div id="stability-value">--%</div>
 
         <div id="dashboard-content" style="display: none;">
-            <div class="widget-title">Spatial Logic Dashboard v2.0</div>
-            
-            <div class="dashboard-grid">
-                <div class="battery-box">
-                    <div class="section-label">Cognitive Battery</div>
-                    <div class="svg-container">
-                        <svg width="140" height="140">
-                            <circle class="progress-bg" cx="70" cy="70" r="55"></circle>
-                            <circle id="moving-arc" class="progress-bar" cx="70" cy="70" r="55"></circle>
-                        </svg>
-                        <div class="battery-text">
-                            <div class="battery-number" id="bat-num">--%</div>
-                            <div class="battery-subtext">Success Green</div>
-                        </div>
-                    </div>
-                    <div class="battery-footer">FLOW STATE BATTERY</div>
-                    <div class="battery-status-tag" id="bat-status">Túlteljesítés</div>
+            <div class="kpi-grid">
+                <div class="kpi-box">
+                    <div class="kpi-label">FLOW INDEX</div>
+                    <div class="kpi-val" id="kpi-flow">--%</div>
                 </div>
-
-                <div class="main-display">
-                    <div class="section-label" style="margin-bottom: 0;">24H Cognitive Flow & Target</div>
-                    <div class="chart-wrapper">
-                        <canvas id="cognitiveChart"></canvas>
-                    </div>
-
-                    <div class="pill-row">
-                        <div class="meta-pill">FLOW INDEX:<span id="pill-flow">--%</span></div>
-                        <div class="meta-pill">RECOVERY:<span id="pill-recovery">--</span></div>
-                        <div class="meta-pill pill-highlight">TIME TO DEFICIT:<span id="pill-tte">--m</span></div>
-                    </div>
-
-                    <div id="alert-msg" class="meta-alert">» Dynamic system feedback payload loading...</div>
+                <div class="kpi-box">
+                    <div class="kpi-label">RECOVERY</div>
+                    <div class="kpi-val" id="kpi-recovery">--m</div>
                 </div>
             </div>
+
+            <div class="chart-title">24H COGNITIVE FLOW & TARGET</div>
+            <div class="chart-container" style="position: relative; width: 100%; height: 120px; margin-top: 10px;">
+                <canvas id="cognitiveChart" width="400" height="120"></canvas>
+            </div>
+            
+            <div id="alert-msg" class="alert-msg"></div>
         </div>
     </div>
 
-    <div id="overlay-msg">Tap Screen to Initialize Systems</div>
+    <div id="overlay-msg">Koppints a szenzor indításához</div>
 
     <script src="app.js"></script>
 </body>

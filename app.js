@@ -145,6 +145,11 @@ function processAndRenderDashboard() {
     if (cognitiveHistory.length === 0) return;
 
     const canvas = document.getElementById('cognitiveChart');
+    
+    // Dynamic coordinate synchronization vector patch for Meta OS Layout consistency
+    canvas.width = canvas.parentElement.clientWidth;
+    canvas.height = canvas.parentElement.clientHeight;
+    
     const ctx = canvas.getContext('2d');
     const w = canvas.width;
     const h = canvas.height;
@@ -321,7 +326,7 @@ function processAndRenderDashboard() {
     // Render NOW Context Flag Tag
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 8px sans-serif';
-    ctx.fillText('NOW', nowX - 10, 12);
+    ctx.fillText('NOW', nowX - 24, 12); // Dynamic horizontal safety buffer text offset adjustment
 
     // 5. NLP Contextual Life Coaching Alert Parser
     const alertBox = document.getElementById('alert-msg');
@@ -343,5 +348,5 @@ function processAndRenderDashboard() {
         alertBox.style.borderColor = "rgba(0, 100, 224, 0.2)";
         alertBox.style.color = "#00c8ff";
     }
-                             }
-                             
+        }
+    

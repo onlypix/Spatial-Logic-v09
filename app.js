@@ -1,10 +1,15 @@
+/**
+ * Spatial Logic v1.2 - Predictive Area Chart Edition
+ * Engineer-level consistency update
+ */
+
 const CONFIG = {
     k: 0.5,
     windowSize: 40,
     lowPassAlpha: 0.3,
     epochMs: 60000,         
-    maxEpochs: 1440,
-    radius: 55 // SVG circle radius
+    maxEpochs: 1440,        // 24 hours persistence
+    stitchThreshold: 120000
 };
 
 let sensorData = { x: [], y: [], z: [] };
@@ -12,31 +17,35 @@ let lastStability = 100;
 let isRunning = false;
 let lastTapTime = 0;
 
+// UI DOM References
 const hudWidget = document.getElementById('hud-widget');
 const dashContent = document.getElementById('dashboard-content');
-const miniAnchor = document.getElementById('mini-anchor');
+const stabilityEl = document.getElementById('stability-value');
+const stateEl = document.getElementById('state-label');
+const trendArrow = document.getElementById('trend-arrow');
+const pulseEl = document.getElementById('focus-indicator');
 const overlay = document.getElementById('overlay-msg');
 
 let cognitiveHistory = JSON.parse(localStorage.getItem('sl_history') || '[]');
 
-// --- CORE SYSTEM INITIALIZER ---
+// --- SYSTEM INITIALIZATION ---
 window.addEventListener('click', async function() {
     const now = Date.now();
     const timeSinceLastTap = now - lastTapTime;
     
     if (isRunning && timeSinceLastTap < 400 && timeSinceLastTap > 50) {
-        toggleDashboard();
+        openDashboard();
     } else if (!isRunning) {
-        overlay.innerText = "Initializing Spatial HUD Interface...";
+        overlay.innerText = "Szenzor inicializálása...";
         try {
             if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
                 const permission = await DeviceMotionEvent.requestPermission();
                 if (permission === 'granted') initEngine();
-                else overlay.innerText = "ERROR: Sensor Permission Denied.";
+                else overlay.innerText = "HIBA: Engedély megtagadva.";
             } else {
                 initEngine();
             }
-        } catch (err) { overlay.innerText = "Exception: " + err.message; }
+        } catch (err) { overlay.innerText = "Kivétel: " + err.message; }
     }
     lastTapTime = now;
 });
@@ -45,9 +54,16 @@ function initEngine() {
     window.addEventListener('devicemotion', handleMotion, true);
     overlay.style.display = 'none';
     isRunning = true;
+    
+    // Heartbeat for background persistence
+    if ("geolocation" in navigator) {
+        navigator.geolocation.watchPosition(()=>{}, ()=>{}, {enableHighAccuracy:false});
+    }
+
     setInterval(recordEpoch, CONFIG.epochMs);
 }
 
+// --- CORE SENSOR LOGIC ---
 function handleMotion(event) {
     let acc = event.accelerationIncludingGravity || event.acceleration;
     if (!acc || (acc.x === null && acc.y === null)) return;
@@ -74,33 +90,20 @@ function calculateRealTimeStability() {
     };
     const combinedStd = Math.sqrt(getVar(sensorData.x) + getVar(sensorData.y) + getVar(sensorData.z));
     lastStability = Math.max(0, Math.min(100, Math.round(100 * Math.exp(-CONFIG.k * combinedStd))));
-    
-    document.getElementById('mini-value').innerText = `${lastStability}%`;
-    if(hudWidget.classList.contains('full-view')) {
-        updateCircularBattery(lastStability);
-    }
+    updateMiniUI(lastStability);
 }
 
-// --- UPDATE SVG CIRCULAR GAUGE ---
-function updateCircularBattery(score) {
-    document.getElementById('bat-num').innerText = `${score}%`;
-    const circle = document.getElementById('moving-arc');
-    const circumference = 2 * Math.PI * CONFIG.radius;
-    
-    circle.style.strokeDasharray = `${circumference} ${circumference}`;
-    const offset = circumference - (score / 100) * circumference;
-    circle.style.strokeDashoffset = offset;
+function updateMiniUI(s) {
+    stabilityEl.innerText = `${s}%`;
+    stateEl.innerText = s > 80 ? "FLOW" : (s > 40 ? "STABLE" : "FATIGUE");
+    hudWidget.style.borderRightColor = s > 80 ? "#00ff88" : (s > 40 ? "#ffcc00" : "#ff4444");
+    s <= 40 ? pulseEl.classList.add('pulse-active') : pulseEl.classList.remove('pulse-active');
 
-    const statusTag = document.getElementById('bat-status');
-    if (score > 80) {
-        statusTag.innerText = "Túlteljesítés";
-        statusTag.style.color = "var(--meta-green)";
-    } else if (score > 40) {
-        statusTag.innerText = "Optimális";
-        statusTag.style.color = "var(--meta-yellow)";
-    } else {
-        statusTag.innerText = "Kimerülés veszély";
-        statusTag.style.color = "var(--meta-red)";
+    if (cognitiveHistory.length > 0) {
+        const lastRec = cognitiveHistory[cognitiveHistory.length - 1].s;
+        if (s > lastRec + 5) trendArrow.innerText = "↑";
+        else if (s < lastRec - 5) trendArrow.innerText = "↓";
+        else trendArrow.innerText = "→";
     }
 }
 
@@ -108,154 +111,91 @@ function recordEpoch() {
     cognitiveHistory.push({ t: Date.now(), s: lastStability });
     if (cognitiveHistory.length > CONFIG.maxEpochs) cognitiveHistory.shift();
     localStorage.setItem('sl_history', JSON.stringify(cognitiveHistory));
-    if (hudWidget.classList.contains('full-view')) processAndRenderDashboard();
 }
 
-function toggleDashboard() {
-    if (hudWidget.classList.contains('full-view')) {
+// --- PREDICTIVE RENDERING ENGINE ---
+function openDashboard() {
+    hudWidget.classList.replace('mini-view', 'full-view');
+    dashContent.style.display = 'block';
+    processAndRenderDashboard();
+    setTimeout(() => {
         hudWidget.classList.replace('full-view', 'mini-view');
         dashContent.style.display = 'none';
-        miniAnchor.style.display = 'block';
-    } else {
-        hudWidget.classList.replace('mini-view', 'full-view');
-        dashContent.style.display = 'block';
-        miniAnchor.style.display = 'none';
-        updateCircularBattery(lastStability);
-        processAndRenderDashboard();
-    }
+    }, 8000);
 }
 
-// --- MATHEMATICAL WAVEFORM GRAPHICS MOTOR ---
 function processAndRenderDashboard() {
+    if (cognitiveHistory.length === 0) return;
+
     const canvas = document.getElementById('cognitiveChart');
-    canvas.width = canvas.parentElement.clientWidth;
-    canvas.height = canvas.parentElement.clientHeight;
-    
     const ctx = canvas.getContext('2d');
     const w = canvas.width;
     const h = canvas.height;
 
-    const nowMs = Date.now();
-    const splitIndex = 1100; // Left bias split matrix configuration
+    // 1. Data Synthesis: Real vs Target
     let full24h = [];
-
+    const now = Date.now();
     for (let i = 0; i < 1440; i++) {
-        let ts = nowMs - (splitIndex - i) * 60000;
+        let ts = now - (1440 - i) * 60000;
         let realPoint = cognitiveHistory.find(p => Math.abs(p.t - ts) < 30000);
+        
+        // Target Curve: Circadian-like focus model
         let hour = new Date(ts).getHours();
-        let targetS = 60 + 22 * Math.sin((hour - 7) * Math.PI / 12); 
+        let targetS = 65 + 20 * Math.sin((hour - 8) * Math.PI / 12); 
 
-        full24h.push({
-            val: i <= splitIndex && realPoint ? realPoint.s : null,
-            target: targetS,
-            isReal: i <= splitIndex && !!realPoint
-        });
+        full24h.push({ val: realPoint ? realPoint.s : null, target: targetS, isReal: !!realPoint });
     }
 
-    let minutesToDeficit = 90; // TTE projection default anchor
-    if (cognitiveHistory.length >= 10) {
-        const segment = cognitiveHistory.slice(-10);
-        let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-        let n = segment.length;
-        for (let i = 0; i < n; i++) {
-            sumX += i; sumY += segment[i].s; sumXY += i * segment[i].s; sumXX += i * i;
-        }
-        let slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
-        if (slope < -0.05) minutesToDeficit = Math.max(5, Math.round((40 - segment[n-1].s) / slope));
-    }
+    // 2. KPI Logic
+    const flowPoints = cognitiveHistory.filter(p => p.s >= 80).length;
+    document.getElementById('kpi-flow').innerText = Math.round((flowPoints / Math.max(1, cognitiveHistory.length)) * 100) + "%";
+    
+    // Recovery heuristic
+    let recMins = cognitiveHistory.filter((p, i) => i > 0 && p.s > 70 && cognitiveHistory[i-1].s < 50).length;
+    document.getElementById('kpi-recovery').innerText = recMins > 0 ? recMins + "m" : "--";
 
-    // Refresh Pill Text Nodes
-    const totalFlowCount = cognitiveHistory.filter(p => p.s >= 80).length;
-    document.getElementById('pill-flow').innerText = Math.round((totalFlowCount / Math.max(1, cognitiveHistory.length)) * 100) + "%";
-    document.getElementById('pill-recovery').innerText = cognitiveHistory.filter((p, i) => i > 0 && p.s > 75 && cognitiveHistory[i-1].s < 45).length + "m";
-    document.getElementById('pill-tte').innerText = minutesToDeficit >= 90 ? "+1.5h" : minutesToDeficit + "m";
-
+    // 3. Canvas Rendering
     ctx.clearRect(0, 0, w, h);
-    const getX = (index) => (index / 1440) * w;
-    const getY = (val) => h - (val / 100) * h;
-    let nowX = getX(splitIndex);
 
-    // Baseline area gradient generation (Ghost Blue Background Envelope)
-    let areaGlow = ctx.createLinearGradient(0, 0, 0, h);
-    areaGlow.addColorStop(0, 'rgba(0, 100, 224, 0.25)');
-    areaGlow.addColorStop(1, 'rgba(0, 50, 150, 0.0)');
-
-    // Path setup for target model
+    // Render Target Area (The "Ghost" Simulation)
     ctx.beginPath();
-    ctx.moveTo(getX(0), h);
-    full24h.forEach((p, i) => ctx.lineTo(getX(i), getY(p.target)));
-    ctx.lineTo(getX(1439), h);
-    ctx.fillStyle = areaGlow;
+    ctx.moveTo(0, h);
+    full24h.forEach((p, i) => { ctx.lineTo((i / 1440) * w, h - (p.target / 100) * h); });
+    ctx.lineTo(w, h);
+    ctx.fillStyle = 'rgba(0, 200, 255, 0.1)';
     ctx.fill();
+    ctx.strokeStyle = 'rgba(0, 200, 255, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
 
-    // Intersection Differential Filler (Gold Delta Surplus Mapping)
+    // Render Real Data (Neon Path)
     ctx.beginPath();
-    let tracking = false;
+    let firstReal = true;
     full24h.forEach((p, i) => {
-        if (i <= splitIndex && p.isReal) {
-            let cx = getX(i);
-            let cy = getY(p.val);
-            let ty = getY(p.target);
-            if (cy < ty) { // Surplus state condition
-                if (!tracking) { ctx.beginPath(); ctx.moveTo(cx, ty); tracking = true; }
-                ctx.lineTo(cx, cy);
-            } else {
-                if (tracking) { ctx.lineTo(cx, ty); ctx.fillStyle = 'rgba(255, 204, 0, 0.15)'; ctx.fill(); tracking = false; }
-            }
+        if (p.isReal) {
+            let x = (i / 1440) * w;
+            let y = h - (p.val / 100) * h;
+            if (firstReal) { ctx.moveTo(x, y); firstReal = false; }
+            else ctx.lineTo(x, y);
         }
     });
-
-    // Real-Time Smooth Vector Stroke (Actual Light Green Track)
-    ctx.beginPath();
-    let first = true;
-    full24h.forEach((p, i) => {
-        if (i <= splitIndex && p.isReal) {
-            if (first) { ctx.moveTo(getX(i), getY(p.val)); first = false; }
-            else ctx.lineTo(getX(i), getY(p.val));
-        }
-    });
-    ctx.strokeStyle = '#00ff88';
-    ctx.lineWidth = 3;
     ctx.shadowBlur = 8;
     ctx.shadowColor = '#00ff88';
+    ctx.strokeStyle = '#00ff88';
+    ctx.lineWidth = 2.5;
     ctx.stroke();
     ctx.shadowBlur = 0;
 
-    // Predictive Linear Horizon Dash Stroke (Dotted Yellow Forecast)
-    let lastRealX = nowX, lastRealY = getY(lastStability);
-    ctx.beginPath();
-    ctx.moveTo(lastRealX, lastRealY);
-    for (let i = splitIndex + 1; i < 1440; i++) {
-        let elapsed = i - splitIndex;
-        let pVal = Math.max(20, lastStability - (elapsed / minutesToDeficit) * (lastStability - 40));
-        ctx.lineTo(getX(i), getY(pVal));
-    }
-    ctx.strokeStyle = 'rgba(255, 204, 0, 0.7)';
-    ctx.lineWidth = 2;
-    ctx.setLineDash([4, 4]);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // Spatial Vertical Temporal Axis Pin (NOW Line)
-    ctx.beginPath();
-    ctx.moveTo(nowX, 0); ctx.lineTo(nowX, h);
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 9px sans-serif';
-    ctx.fillText('NOW', nowX - 28, 14);
-
-    // Adaptive Alert Engine Update
-    const alertBox = document.getElementById('alert-msg');
-    if (lastStability > full24h[splitIndex].target) {
-        alertBox.innerText = "» Surpassing model. Good momentum.";
-        alertBox.style.color = "var(--meta-green)";
-        alertBox.style.background = "rgba(0, 255, 136, 0.05)";
+    // Alert Logic
+    const alertMsg = document.getElementById('alert-msg');
+    const recentAvg = cognitiveHistory.slice(-60).reduce((a, b) => a + b.s, 0) / Math.max(1, Math.min(60, cognitiveHistory.length));
+    if (recentAvg < 45) {
+        alertMsg.innerText = "COGNITIVE OVERLOAD DETECTED";
+        alertMsg.style.color = "#ff4444";
     } else {
-        alertBox.innerText = "» Approaching baseline threshold. Monitor overhead.";
-        alertBox.style.color = "var(--meta-yellow)";
-        alertBox.style.background = "rgba(255, 204, 0, 0.05)";
+        alertMsg.innerText = "SYSTEMS OPTIMAL";
+        alertMsg.style.color = "#00ff88";
     }
-}
+                          }
+
+                      

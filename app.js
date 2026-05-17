@@ -1,6 +1,6 @@
 /**
- * Spatial Logic v1.2 - Predictive Area Chart Edition
- * Engineer-level consistency update
+ * Spatial Logic v1.2 - Adaptive Cognitive Pacing Edition
+ * Engineer-level consistency update - Rolling Adaptive Baseline
  */
 
 const CONFIG = {
@@ -8,7 +8,7 @@ const CONFIG = {
     windowSize: 40,
     lowPassAlpha: 0.3,
     epochMs: 60000,         
-    maxEpochs: 1440,        // 24 hours persistence
+    maxEpochs: 4320,        // MÓDOSÍTVA: 24 óra helyett 3 nap (72 óra) puffer a gördülő mintázathoz
     stitchThreshold: 120000
 };
 
@@ -139,9 +139,23 @@ function processAndRenderDashboard() {
         let ts = now - (1440 - i) * 60000;
         let realPoint = cognitiveHistory.find(p => Math.abs(p.t - ts) < 30000);
         
-        // Target Curve: Circadian-like focus model
         let hour = new Date(ts).getHours();
-        let targetS = 65 + 20 * Math.sin((hour - 8) * Math.PI / 12); 
+
+        // MÓDOSÍTVA: Adaptive Cognitive Pacing Model logic
+        // Kiszűrjük az előző napok azonos órához tartozó történeti pontjait (legalább 24 órával ezelőttiek)
+        let historicalPoints = cognitiveHistory.filter(p => 
+            new Date(p.t).getHours() === hour && p.t < (now - 86400000)
+        );
+
+        let targetS;
+        if (historicalPoints.length > 0) {
+            // ADAPTÍV: A felhasználó saját korábbi stabilitási értékeinek átlaga az adott órában
+            let sum = historicalPoints.reduce((acc, p) => acc + p.s, 0);
+            targetS = sum / historicalPoints.length;
+        } else {
+            // GENERATÍV FALLBACK: Ha vadonatúj a rendszer, az eredeti cirkadián szinuszos modell fut le
+            targetS = 65 + 20 * Math.sin((hour - 8) * Math.PI / 12); 
+        }
 
         full24h.push({ val: realPoint ? realPoint.s : null, target: targetS, isReal: !!realPoint });
     }
@@ -196,6 +210,5 @@ function processAndRenderDashboard() {
         alertMsg.innerText = "SYSTEMS OPTIMAL";
         alertMsg.style.color = "#00ff88";
     }
-                          }
-
-                      
+}
+    
